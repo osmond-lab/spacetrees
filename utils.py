@@ -1,78 +1,45 @@
 import numpy as np
 
-def choose_loci(anc, mut, skip, outfile):
+def loci_positions(mut, outfile):
 
-    print('getting tree indices')
-    ixs_start=[]
-    ixs_end=[]
-    with open(anc, "r") as f:
-      for i, line in enumerate(f): #each line is a tree, see https://myersgroup.github.io/relate/getting_started.html#Output
-        if i==1: 
-          n = int(line.split()[1]) #number of trees on this chromosome
-          trees = [i for i in range(0,n+1,skip)] #which trees to sample
-        if i > 1 and i-2 in trees:
-          ixs_start.append(int(line.split(':')[0])) #index of first snp in sampled tree
-        if i > 2 and i-3 in trees: 
-          ixs_end.append(int(line.split(':')[0])-1) #index of last snp in sampled tree
-    print('choose',len(ixs_start),'trees')
-    print('getting start and stop basepairs')
-    bps_start = []
-    bps_end = []
-    with open(mut,"r") as f:
-      for i,line in enumerate(f):
-        if i>0 and int(line.split(';')[0]) in ixs_start:
-          bps_start.append(int(line.split(';')[1])) #position of first snp in sampled tree
-        if i>0 and int(line.split(';')[0]) in ixs_end:
-          bps_end.append(int(line.split(';')[1])) #position of last snp in sampled tree
-    print('writing to file')
-    with open(outfile, 'w') as out:
-      for start,end in zip(bps_start,bps_end):
-        out.write(str(start) + ' ' + str(end) + '\n')
+  with open(outfile, 'w') as fout:
+    with open(mut, "r") as fin:
+      ix = 1
+      next(fin) #skip header
+      for i,line in enumerate(fin):
+        if i==0:
+          start = int(line.split(';')[1]) #position of first snp
+        elif int(line.split(';')[4]) == ix: #when we reach next locus 
+          end = pos #position of last snp at previous locus
+          fout.write(str(start) + ' ' + str(end) + '\n') #position of first and last snp at previous locus
+          start = int(line.split(';')[1]) #position of first snp at this locus
+          ix = ix + 1 #next locust
+        pos = int(line.split(';')[1]) #position of this snp
+    fout.write(str(start) + ' ' + str(pos) + '\n') #position of first and last snp at last locus
 
 def get_shared_times(tree, samples):
 
-  T = tree.time(tree.root) #tmrca of tree
-  k = len(samples)
+  TMRCA = tree.time(tree.root) #tmrca of tree
+  k = len(samples) #number of samples
 
-  sts = np.zeros((k,k))
+  sts = [] 
   for i in range(k):
-    sts[i,i] = T #shared time with self (same for all samples, so put in any diagonal entry)
-
-    for j in range(i):
-      st = T - tree.tmrca(samples[i],samples[j]) #shared time of pair, placed to align with locations
-      sts[i,j] = st
-      sts[j,i] = st
+    for j in range(i,k): #just building upper triangular part of symmetric matrix
+      st = TMRCA - tree.tmrca(samples[i],samples[j]) #shared time of pair, ordered to align with locations
+      sts.append(st)
 
   return sts
 
-def chop_shared_times(shared_times, tCutoff=None):
+def chop_shared_times(shared_times, T=None):
 
-  k = len(shared_times) #total number of samples
-  samples = np.arange(k) #list of samples (assumes the shared times are ordered already)
-  
-  # if we don't need to cut then just return a single matrix and associated samples
-  T = shared_times[0,0] #tmrca
- 
-  if tCutoff is None or tCutoff>T:
-    return [shared_times], [samples]
+  TMRCA = shared_times[0] #tmrca
 
-  # if we do have to cut
-  shared_times_sinceT = tCutoff - (T-shared_times) #calculate shared time since tCutoff
+  if T is None or T > TMRCA: #dont cut if dont ask or cut time older than MRCA
+    pass
+  else:
+    shared_times = T - (TMRCA - shared_times) #calculate shared times since T
 
-  # and now the harder part of grouping times and samples for each subtree 
-  sts = [] #list of shared times matrices for each subtree
-  smpls = [] #list of samples in each subtree
-  taken = [False for _ in range(k)] #keep track of which samples already in a subtree
-  while sum(taken) < k: #while some samples not yet in a subtree
-    i = np.argmax(taken == False) #choose next sample, i, not yet in a subtree
-    withi = shared_times_sinceT[i] >= 0 #samples which share time with i
-    taken = np.array([i[0] or i[1] for i in zip(taken, withi)]) #update which samples taken
-    stsi = shared_times_sinceT[withi][:, withi] #shared times of subtree with i
-    smplsi = samples[np.where(withi)[0]] #samples in this subtree
-    sts.append(stsi)
-    smpls.append(smplsi)
-      
-  return sts, smpls 
+  return shared_times
 
 def center_shared_times(shared_times):
  
@@ -81,3 +48,70 @@ def center_shared_times(shared_times):
   stc = np.matmul(Tmat, np.matmul(shared_times, np.transpose(Tmat))) #center shared times in subtree
  
   return stc
+
+def log_coal_density(times, Nes, epochs=None, T=None):
+
+    """
+    log probability of coalescent times under standard neutral/panmictic coalescent
+    """
+
+    if epochs is None and len(Nes) == 1:
+        epochs = [0, max(times)] #one big epoch
+        Nes = [Nes[0], Nes[0]] #repeat the effective population size so same length as epochs 
+
+    logp = 0 #initialize log probability
+    prevt = 0 #initialize time
+    prevLambda = 0 #initialize coalescent intensity
+    k = len(times) + 1 #number of samples
+    if T is not None:
+        times = times[times < T] #ignore old times
+    myIntensityMemos = _coal_intensity_memos(epochs, Nes) #intensities up to end of each epoch
+
+    # probability of each coalescence time
+    for t in times: #for each coalescence time t
+        kchoose2 = k * (k - 1) / 2 #binomial coefficient
+        Lambda = _coal_intensity_using_memos(t, epochs, myIntensityMemos, Nes) #coalescent intensity up to time t
+        ie = np.digitize(np.array([t]), epochs) #epoch at the time of coalescence
+        logpk = np.log(kchoose2 * 1 / (2 * Nes[ie])) - kchoose2 * (Lambda - prevLambda) #log probability (waiting times are time-inhomogeneous exponentially distributed)
+        logp += logpk #add log probability
+        prevt = t #update time
+        prevLambda = Lambda #update intensity
+        k -= 1 #update number of lineages
+
+    # now add the probability of lineages not coalescing by T 
+    if k > 1 and T is not None: #if we have more than one lineage remaining
+        kchoose2 = k * (k - 1) / 2 #binomial coefficient
+        Lambda = _coal_intensity_using_memos(T, epochs, myIntensityMemos, Nes) #coalescent intensity up to time T 
+        logPk = - kchoose2 * (Lambda - prevLambda) #log probability of no coalescence
+        logp += logPk #add log probability
+
+    return logp[0] #FIX: extra dimn introduced somewhere
+
+def _coal_intensity_using_memos(t, epochs, intensityMemos, Nes):
+
+    """
+    add coal intensity up to time t
+    """
+
+    iEpoch = int(np.digitize(np.array([t]), epochs)[0] - 1) #epoch 
+    t1 = epochs[iEpoch] #time at which the previous epoch ended
+    Lambda = intensityMemos[iEpoch] #intensity up to end of previous epoch
+    Lambda += 1 / (2 * Nes[iEpoch]) * (t - t1) #add intensity for time in current epoch
+    return Lambda
+
+def _coal_intensity_memos(epochs, Nes):
+
+    """
+    coalescence intensity up to the end of each epoch
+    """
+
+    Lambda = np.zeros(len(epochs))
+    for ie in range(1, len(epochs)):
+        t0 = epochs[ie - 1] #start time
+        t1 = epochs[ie] #end time
+        Lambda[ie] = (t1 - t0) #elapsed time
+        Lambda[ie] *= 1 / (2 * Nes[ie - 1]) #multiply by coalescence intensity
+        Lambda[ie] += Lambda[ie - 1] #add previous intensity
+
+    return Lambda
+

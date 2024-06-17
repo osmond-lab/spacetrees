@@ -116,14 +116,16 @@ def locate_ancestors(ancestor_samples, ancestor_times,
         
     return np.array(all_ancestor_locations)
 
-def mle_dispersal(locations, shared_times_inverted, samples, log_det_shared_times=None, 
+def mle_dispersal(locations, shared_times_inverted, shared_times_logdet=None, 
                   sigma0=None, bnds=None, method='L-BFGS-B', callbackF=None,
-                  important=False, branching_times=None, phi0=None, scale_phi=None, logpcoals=None,
+                  important=True, branching_times=None, phi0=None, scale_phi=None, logpcoals=None,
                   quiet=False, BLUP=False):
 
     """
     Numerically estimate maximum likelihood dispersal rate (and possibly branching rate) given sample locations and shared times.
     """
+
+    if not quiet: print('\n%%%%%%%%%%%% inferring dispersal with spacetrees %%%%%%%%%%%%')
 
     L = len(shared_times_inverted)
     M = len(shared_times_inverted[0])
@@ -132,85 +134,41 @@ def mle_dispersal(locations, shared_times_inverted, samples, log_det_shared_time
     except:
         n = len(locations)
         d = 1
-    if not quiet: print('number of loci:',L,'\nnumber of trees per locus:',M,'\nnumber of samples:',n,'\nnumber of spatial dimensions:',d)
+    if not quiet: print('number of loci:',L,'\nnumber of trees per locus:',M,'\nnumber of samples:',n,'\nnumber of spatial dimensions:',d,'\n')
 
-    # prepare locations
-    if not quiet: print('\npreparing locations')
-    if sigma0 is not None and not BLUP:
-        locsss = []
-        for smplss in tqdm(samples): #loci
-            locss = []
-            for smpls in smplss: #trees
-                locs = []
-                for smpl in smpls: #subtrees
-                    k = len(smpl)
-                    loc = np.array([locations[i] for i in smpl]) #locations of that subtree
-                    Tmat = np.identity(k) - [[1/k for _ in range(k)] for _ in range(k)]; Tmat = Tmat[0:-1] #mean centering matrix
-                    loc_mc = np.matmul(Tmat, loc) #mean centered locations
-                    loc_mc_vec = np.transpose(loc_mc).flatten() #make a vector
-                    locs.append(loc_mc_vec)
-                locss.append(locs)
-            locsss.append(locss)
-    # and potentially find decent initial dispersal rate
+    # mean center locations
+#    if not quiet: print('mean centering locations...\n')
+    Tmat = np.identity(n) - [[1/n for _ in range(n)] for _ in range(n)]; Tmat = Tmat[0:-1] #mean centering matrix 
+    locations = np.matmul(Tmat, locations) #mean centered locations
+    locations_vector = np.transpose(locations).flatten() #make a vector
+
+    # find decent initial dispersal rate
+    if sigma0 is None or BLUP:
+        if not quiet: print('initializing dispersal rate...')
+        guess = np.zeros((d,d))
+        for stss in tqdm(shared_times_inverted): #loop over loci
+            for sts in stss: #loop over trees
+                guess += _mle_dispersal_tree(locations, sts) 
+        guess = guess/(L*M) #avg mle over all trees and loci (note that we can avg over all trees and loci simultaneously because same number of trees at every locus)
+        x0 = _sigma_to_sds_rho(guess) #convert initial dispersal rate to standard deviations and correlation, to feed into numerical search
+        if BLUP:
+            return x0 #best linear unbiased predictor (returned as sds and corr, like numerical search below)
+        x0 = [i/2 for i in x0] #heuristic because the estimate seems to be a consistent overestimate
+        if not quiet: print('initial dispersal rate:',x0)
     else:
-        if not quiet: print('and finding best linear unbiased predictor (BLUP) of dispersal rate')
-        locsss = []
-        #kvsum = np.zeros((d,d))
-        #ksum = 0
-        blup = np.zeros((d,d))
-        for stss, smplss in tqdm(zip(shared_times_inverted, samples), total=L): #loci
-            locss = []
-            #kvisum = np.zeros((d,d))
-            #kisum = 0
-            for sts, smpls in zip(stss, smplss): #trees
-                locs = []
-                kvijsum = np.zeros((d,d))
-                kijsum = 0
-                for st, smpl in zip(sts, smpls): #subtrees
-                    k = len(smpl) #number of samples in subtree before mean centering
-                    loc = np.array([locations[i] for i in smpl]) #locations of that subtree
-                    Tmat = np.identity(k) - [[1/k for _ in range(k)] for _ in range(k)]; Tmat = Tmat[0:-1] #mean centering matrix
-                    loc_mc = np.matmul(Tmat, loc) #mean centered locations
-                    loc_mc_vec = np.transpose(loc_mc).flatten() #make a vector
-                    locs.append(loc_mc_vec)
-                    if k>1: #need more than 1 sample in a subtree to estimate dispersal
-                        mle = _mle_dispersal_tree(loc_mc, st.astype('float')) #ensure matrix is float for faster computation and broadcasting below
-                        kvijsum += (k-1)*mle #add weighted mle dispersal rate for subtree 
-                        kijsum += k-1 #and weight
-                locss.append(locs)
-                #if not BLUP:
-                #if kisum == 0: #just use first tree at each locus to initialize sigma
-                #kvisum += kvijsum #add weighted mle dispersal rate for tree
-                #kisum += kijsum
-                #else:
-                blup += kvijsum/kijsum #add mle for this tree
-            locsss.append(locss)
-            #if not BLUP:
-            #kvsum += kvisum #add weighted mle dispersal rate for locus
-            #ksum += kisum
-            
-        #if not BLUP:
-        #sigma0 = kvsum/ksum #this is the mle dispersal rate over loci and subtrees (using just the first tree at each locus)
-        #if not quiet: print('initial dispersal rate:\n',sigma0)
-
-    blup = blup/(L*M) #avg mle over all trees and loci (note that we can avg over all trees and loci simultaneously because same number of trees at every locus)
-    if not quiet: print('BLUP dispersal rate:\n',blup)
-    x0 = _sigma_to_sds_rho(blup) #convert initial dispersal rate to standard deviations and correlation, to feed into numerical search
-    if BLUP:
-        return x0 #best linear unbiased predictor (returned as sds and corr, like numerical search below)
-    
+        x0 = sigma0
 
     # initializing branching rate
     if important:
         if phi0 is None:
-            phi0 = np.mean([np.log(n/len(smpls))/bts[-1] for smplss,btss in zip(samples,branching_times) for smpls,bts in zip(smplss,btss)]) #initial guess at branching rate, from n(t)=n(0)e^(phi*t)
+            phi0 = np.mean([np.log(n/(n-len(bts)+1))/bts[-1] for bts in branching_times]) #initial guess at branching rate, from n(t)=n(0)e^(phi*t)
             if not quiet: print('initial branching rate:',phi0) 
         if scale_phi is None:
             scale_phi = x0[0]/phi0 #we will search for the value of phi*scale_phi that maximizes the likelihood (putting phi on same scale as dispersal accelarates search) 
         x0.append(phi0*scale_phi)
         
     # negative composite log likelihood ratio, as function of x
-    f = _sum_mc(locations=locsss, shared_times_inverted=shared_times_inverted, log_det_shared_times=log_det_shared_times,
+    f = _sum_mc(locations=locations_vector, shared_times_inverted=shared_times_inverted, shared_times_logdet=shared_times_logdet,
                 important=important, branching_times=branching_times, scale_phi=scale_phi, logpcoals=logpcoals)
 
     # impose bounds on parameters
@@ -313,7 +271,7 @@ def _sigma_to_sds_rho(sigma):
         rho = sigma[0,1]/(sdx * sdy) #note that small sdx and sdy will raise errors
         return [sdx, sdy, rho]
 
-def _sum_mc(locations, shared_times_inverted, log_det_shared_times,
+def _sum_mc(locations, shared_times_inverted, shared_times_logdet,
             important=False, branching_times=None, scale_phi=None, logpcoals=None):
 
     """
@@ -321,7 +279,7 @@ def _sum_mc(locations, shared_times_inverted, log_det_shared_times,
     """
 
     if not important:
-        L = len(log_det_shared_times) #number of loci
+        L = len(shared_times_logdet) #number of loci
         branching_times = [None for _ in range(L)]
         logpcoals = branching_times
 
@@ -340,8 +298,8 @@ def _sum_mc(locations, shared_times_inverted, log_det_shared_times,
         # calculate negative log composite likelihood ratio
         # by subtracting log likelihood ratio at each locus
         g = 0
-        for locs, sti, ldst, bts, lpcs in zip(locations, shared_times_inverted, log_det_shared_times, branching_times, logpcoals): #loop over loci
-            g -= _mc(locations=locs, shared_times_inverted=sti, log_det_shared_times=ldst,
+        for sti, ldst, bts, lpcs in zip(shared_times_inverted, shared_times_logdet, branching_times, logpcoals): #loop over loci
+            g -= _mc(locations=locations, shared_times_inverted=sti, shared_times_logdet=ldst,
                      sigma_inverted=sigma_inverted, log_det_sigma=log_det_sigma,
                      important=important, branching_times=bts, phi=phi, logpcoals=lpcs)
         return g
@@ -364,7 +322,7 @@ def _sds_rho_to_sigma(x):
 
     return sigma
 
-def _mc(locations, shared_times_inverted, log_det_shared_times, sigma_inverted, log_det_sigma,
+def _mc(locations, shared_times_inverted, shared_times_logdet, sigma_inverted, log_det_sigma,
         important=False, branching_times=None, phi=None, logpcoals=None):
 
     """
@@ -375,14 +333,14 @@ def _mc(locations, shared_times_inverted, log_det_shared_times, sigma_inverted, 
 
     # loop over trees at a locus
     if important:
-        for locs, sti, ldst, bts, lpc in zip(locations, shared_times_inverted, log_det_shared_times, branching_times, logpcoals):
-            LLRs.append(_log_likelihoodratio(locations=locs, shared_times_inverted=sti, log_det_shared_times=ldst,
+        for sti, ldst, bts, lpc in zip(shared_times_inverted, shared_times_logdet, branching_times, logpcoals):
+            LLRs.append(_log_likelihoodratio(locations=locations, shared_times_inverted=sti, shared_times_logdet=ldst,
                                              sigma_inverted=sigma_inverted, log_det_sigma=log_det_sigma, 
                                              important=important, branching_times=bts, phi=phi, logpcoals=lpc))
 
     else:
-        for locs, sti, ldst in zip(locations, shared_times_inverted, log_det_shared_times):
-            LLRs.append(_log_likelihoodratio(locations=locs, shared_times_inverted=sti, log_det_shared_times=ldst,
+        for sti, ldst in zip(shared_times_inverted, shared_times_logdet):
+            LLRs.append(_log_likelihoodratio(locations=locations, shared_times_inverted=sti, shared_times_logdet=ldst,
                                              sigma_inverted=sigma_inverted, log_det_sigma=log_det_sigma,
                                              important=important))
     
@@ -402,7 +360,7 @@ def _logsumexp(a):
 
     return out
 
-def _log_likelihoodratio(locations, shared_times_inverted, log_det_shared_times, sigma_inverted, log_det_sigma,
+def _log_likelihoodratio(locations, shared_times_inverted, shared_times_logdet, sigma_inverted, log_det_sigma,
                          important=False, branching_times=None, phi=None, logpcoals=None):
 
     """ 
@@ -410,26 +368,20 @@ def _log_likelihoodratio(locations, shared_times_inverted, log_det_shared_times,
     """
   
     # log likelihood of dispersal rate
-    LLR = 0
-    n = 0
-    ksum = 0
-    for locs, sts, ldst in zip(locations, shared_times_inverted, log_det_shared_times): #loop over subtrees
-        k = len(sts); n += k + 1 #the plus 1 assumes times are mean centered
-        if k>0:
-            LLR += _location_loglikelihood(locs, sts.astype('float'), ldst, sigma_inverted)
-            ksum += k
+    k = len(shared_times_inverted);
+    LLR = _location_loglikelihood(locations, shared_times_inverted, shared_times_logdet, sigma_inverted)
     d,_ = sigma_inverted.shape
-    if ksum>0: LLR -= ksum/2 * (d*np.log(2*np.pi) + log_det_sigma)  #can factor this out over subtrees
+    LLR -= k/2 * (d*np.log(2*np.pi) + log_det_sigma)  #can factor this out over subtrees
 
-    if important and ksum>0:
+    if important:
         # log probability of branching times given pure birth process with rate phi
-        LLR += _log_birth_density(branching_times=branching_times, phi=phi, n=n) 
+        LLR += _log_birth_density(branching_times=branching_times, phi=phi, n=k+1) 
         # log probability of coalescence times given standard coalescent (precalculated as parameter-independent)
         LLR -= logpcoals
     
     return LLR
 
-def _location_loglikelihood(locations, shared_times_inverted, log_det_shared_times, sigma_inverted):
+def _location_loglikelihood(locations, shared_times_inverted, shared_times_logdet, sigma_inverted):
 
     """
     Log probability density of locations when locations ~ MVN(0,sigma_inverted*shared_times_inverted).
@@ -437,7 +389,7 @@ def _location_loglikelihood(locations, shared_times_inverted, log_det_shared_tim
     
     # log of coefficient in front of exponential (times -2)
     d,_ = sigma_inverted.shape
-    logcoeff = d*log_det_shared_times #just the part that depends on data
+    logcoeff = d*shared_times_logdet #just the part that depends on data
 
     # exponent (times -2)
     exponent = np.matmul(np.matmul(np.transpose(locations), np.kron(sigma_inverted, shared_times_inverted)), locations)   
@@ -470,69 +422,3 @@ def _log_birth_density(branching_times, phi, n, condition_on_n=True):
         logp -= np.log(math.comb(k - 1, k - n0) * (1 - np.exp(-phi * T))**(k - n0)) - phi * n0 * T # see page 234 of https://www.pitt.edu/~super7/19011-20001/19531.pdf for two different expressions
 
     return logp
-
-def _log_coal_density(times, Nes, epochs=None, tCutoff=None):
-
-    """
-    log probability of coalescent times under standard neutral/panmictic coalescent
-    """
-
-    if epochs is None and len(Nes) == 1:
-        epochs = [0, max(times)] #one big epoch
-        Nes = [Nes[0], Nes[0]] #repeat the effective population size so same length as epochs 
-
-    logp = 0 #initialize log probability
-    prevt = 0 #initialize time
-    prevLambda = 0 #initialize coalescent intensity
-    k = len(times) + 1 #number of samples
-    if tCutoff is not None:
-        times = times[times < tCutoff] #ignore old times
-    myIntensityMemos = _coal_intensity_memos(epochs, Nes) #intensities up to end of each epoch
-
-    # probability of each coalescence time
-    for t in times: #for each coalescence time t
-        kchoose2 = k * (k - 1) / 2 #binomial coefficient
-        Lambda = _coal_intensity_using_memos(t, epochs, myIntensityMemos, Nes) #coalescent intensity up to time t
-        ie = np.digitize(np.array([t]), epochs) #epoch at the time of coalescence
-        logpk = np.log(kchoose2 * 1 / (2 * Nes[ie])) - kchoose2 * (Lambda - prevLambda) #log probability (waiting times are time-inhomogeneous exponentially distributed)
-        logp += logpk #add log probability
-        prevt = t #update time
-        prevLambda = Lambda #update intensity
-        k -= 1 #update number of lineages
-
-    # now add the probability of lineages not coalescing by tCutoff
-    if k > 1 and tCutoff is not None: #if we have more than one lineage remaining
-        kchoose2 = k * (k - 1) / 2 #binomial coefficient
-        Lambda = _coal_intensity_using_memos(tCutoff, epochs, myIntensityMemos, Nes) #coalescent intensity up to time tCutoff
-        logPk = - kchoose2 * (Lambda - prevLambda) #log probability of no coalescence
-        logp += logPk #add log probability
-
-    return logp[0] #FIX: extra dimn introduced somewhere
-
-def _coal_intensity_using_memos(t, epochs, intensityMemos, Nes):
-
-    """
-    add coal intensity up to time t
-    """
-
-    iEpoch = int(np.digitize(np.array([t]), epochs)[0] - 1) #epoch 
-    t1 = epochs[iEpoch] #time at which the previous epoch ended
-    Lambda = intensityMemos[iEpoch] #intensity up to end of previous epoch
-    Lambda += 1 / (2 * Nes[iEpoch]) * (t - t1) #add intensity for time in current epoch
-    return Lambda
-
-def _coal_intensity_memos(epochs, Nes):
-
-    """
-    coalescence intensity up to the end of each epoch
-    """
-
-    Lambda = np.zeros(len(epochs))
-    for ie in range(1, len(epochs)):
-        t0 = epochs[ie - 1] #start time
-        t1 = epochs[ie] #end time
-        Lambda[ie] = (t1 - t0) #elapsed time
-        Lambda[ie] *= 1 / (2 * Nes[ie - 1]) #multiply by coalescence intensity
-        Lambda[ie] += Lambda[ie - 1] #add previous intensity
-
-    return Lambda
