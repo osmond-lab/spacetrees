@@ -29,6 +29,5 @@ Here is how to get set up and run spacetrees, from the command-line:
 	- TODO: some may need to install Jupyter?
 	- open the Jupyter notebook plots.ipynb. I do this through my server's JupyterHub, https://jupyter.scinet.utoronto.ca/
 	- run the code (command+enter to execute a cell)
-	- TODO: more details needed
 - Get in touch!
 	- I'd love to hear if you are using this software, have any suggested improvements, or need any help: mm.osmond@utoronto.ca
