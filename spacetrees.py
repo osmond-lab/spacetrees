@@ -5,116 +5,91 @@ import numpy as np
 import math
 from tqdm import tqdm 
 
-def locate_ancestors(ancestor_samples, ancestor_times, 
-                     shared_times_chopped, samples, locations, 
-                     log_weights=[0], sigma=1, x0_final=None, BLUP=False, BLUP_var=False):
+def locate_ancestors(samples, times, 
+                     shared_times_chopped, shared_times_chopped_centered_inverted, locations, 
+                     log_weights=[0], sigma=1, x0_final=None, BLUP=False, BLUP_var=False, quiet=False):
 
     """
     Locate genetic ancestors given sample locations and shared times.
     """
+   
+    if not quiet: print('\n%%%%%%%%%%%% locating ancestors with spacetrees %%%%%%%%%%%%')
     
+    n = len(locations)    
     d = len(locations[0]) 
+    
+    mean_location = np.mean(locations, axis=0) #mean location
+    Tmat = np.identity(n) - [[1/n for _ in range(n)] for _ in range(n)]; Tmat = Tmat[:-1] #mean centering matrix
+    locations_centered = np.matmul(Tmat, locations) #centered locations
 
-    all_ancestor_locations = []
-    all_ancestor_variances = []
-    # first loop over the samples we want to find ancestors of
-#    for sample in tqdm(ancestor_samples):
-    for sample in ancestor_samples:
+    stmrs = []
+    stms = []
+    stcilcs = []
+    for stsc, stci in zip(shared_times_chopped, shared_times_chopped_centered_inverted):
 
-        sts = []
-        stmrs = []
-        stms = []
-        stcis = []
-        locs_means = []
-        stcilcs = []
-        js = []
-        # next loop over trees at this locus, getting the quantities we need that are independent of the age of the ancestor
-        for stsc, smpls in zip(shared_times_chopped, samples):
+        stmr = np.mean(stsc, axis=1) #average times in each row
+        stmrs.append(stmr)
+        stm = np.mean(stsc) #average times in whole matrix
+        stms.append(stm)
+        stcilc = np.matmul(stci, locations_centered)
+        stcilcs.append(stcilc)
 
-            i,j = _get_focal_index(sample, smpls) #subtree and index of sample
-            js.append(j)
-            st = stsc[i].astype('float') #shared times in subtree (make sure float for faster computation)
-            sts.append(st)
-            stmr = np.mean(st, axis=1) #average times in each row
-            stmrs.append(stmr)
-            stm = np.mean(st) #average times in whole matrix
-            stms.append(stm)
-            n = len(st); 
-            # note that if n=1, we get lots of empty matrices below, 
-            # but the mle and var are calculated correctly (sample location and sigma*t respectively)
+    ancestor_locations = np.zeros((len(samples),len(times),d))
+    ancestor_variances = np.zeros((len(samples),len(times)))
+    for s,sample in enumerate(samples):
 
-            Tmat = np.identity(n) - [[1/n for _ in range(n)] for _ in range(n)]; Tmat = Tmat[:-1] #mean centering matrix
-            stc = np.matmul(Tmat, np.matmul(st, np.transpose(Tmat))) #center shared times matrix
-            stci = np.linalg.inv(stc) #invert 
-            stcis.append(stci)
-            
-            locs = locations[smpls[i].astype('int')] #locations of samples in subtree
-            locs_mean = np.mean(locs, axis=0) #mean location
-            locs_means.append(locs_mean)
-            lc = np.matmul(Tmat, locs) #centered locations
-            stcilc = np.matmul(stci, lc) #product used below
-            stcilcs.append(stcilc)
-
-        ancestor_locations = locations[sample]
-        ancestor_variances = [0]
-        # now we will loop over the times we want to locate the ancestor at
-        for ancestor_time in ancestor_times:
-
+        for t,time in enumerate(times):
+    
             fs = []
             mles = []
             bvars = []
-            # looping over trees at this locus again
-            for st,stmr,stm,stci,lm,stcilc,j in zip(sts, stmrs, stms, stcis, locs_means, stcilcs, js):
-
-                n = len(st); Tmat = np.identity(n) - [[1/n for _ in range(n)] for _ in range(n)]; Tmat = Tmat[:-1] #mean centering matrix
-
-                at = _anc_times(st, ancestor_time, j) #shared times between samples and ancestor
+            # loop over trees at this locus
+            for stsc, stmr, stm, stcilc in zip(shared_times_chopped, stmrs, stms, stcilcs):
+    
+                at = _anc_times(stsc, time, sample) #shared times between samples and ancestor
                 atc = np.matmul(Tmat, (at[:-1] - stmr)) #center this
                 taac = at[-1] - 2*np.mean(at[:-1]) + stm #center shared times of ancestor with itself
-                mle_loc = lm + np.matmul(atc.transpose(), stcilc) #mean loc
+                mle = mean_location + np.matmul(atc.transpose(), stcilc) #most likely location
+    
                 if BLUP:
-                    mles.append(mle_loc)
+                    mles.append(mle)
                     if BLUP_var:
-                        var_loc = (taac - np.matmul(np.matmul(atc.transpose(), stci), atc)) * sigma #variance in loc
-                        bvars.append(var_loc)
+                        var = (taac - np.matmul(np.matmul(atc.transpose(), stci), atc)) #variance in loc (multiply by sigma later)
+                        bvars.append(var)
                 else:
-                    var_loc = (taac - np.matmul(np.matmul(atc.transpose(), stci), atc)) * sigma #variance in loc
-                    fs.append(lambda x: _lognormpdf(x, mle_loc, var_loc)) #append likelihood
+                    var = (taac - np.matmul(np.matmul(atc.transpose(), stci), atc)) * sigma #variance in loc
+                    fs.append(lambda x: _lognormpdf(x, mle, var)) #append likelihood
 
-            if BLUP:
-                blup = np.zeros(d) 
-                tot_weight = 0
-                # weighted average of mles
-                for mle, log_weight in zip(mles, log_weights):
-                     blup += mle * np.exp(log_weight)
-                     tot_weight += np.exp(log_weight)
-                blup = blup/tot_weight
-                ancestor_locations = np.vstack([ancestor_locations,blup])
-                # weighted average of variances
-                blup_var = 0
-                for bvar, log_weight in zip(bvars, log_weights):
-                     blup_var += bvar * np.exp(log_weight)
-                blup_var = blup_var/tot_weight
-                ancestor_variances = np.vstack([ancestor_variances,blup_var])
-
-            else:
-                # find min of negative of log of summed likelihoods (weighted by importance)
-                def g(x): 
-                    return -_logsumexp([f(x) + log_weight for f,log_weight in zip(fs, log_weights)])
-                x0 = locations[sample] 
-                if x0_final is not None:
-                    x0 = x0 + (x0_final - x0)*ancestor_time/ancestor_times[-1] #make a linear guess
-                mle = minimize(g, x0=x0).x
-                ancestor_locations = np.vstack([ancestor_locations,mle])
-
-        all_ancestor_locations.append(ancestor_locations)
-        if BLUP_var:
-            all_ancestor_variances.append(ancestor_variances)
-
+        if BLUP:
+            blup = np.zeros(d) 
+            tot_weight = 0
+            # weighted average of mles
+            for mle, log_weight in zip(mles, log_weights):
+                 blup += mle * np.exp(log_weight)
+                 tot_weight += np.exp(log_weight)
+            blup = blup/tot_weight
+            ancestor_locations[s,t] = blup
+            # weighted average of variances
+            blup_var = 0
+            for bvar, log_weight in zip(bvars, log_weights):
+                 blup_var += bvar * np.exp(log_weight)
+            blup_var = blup_var/tot_weight
+            ancestor_variances[s,t] = blup_var
+ 
+        else:
+            # find min of negative of log of summed likelihoods (weighted by importance)
+            def g(x): 
+                return -_logsumexp([f(x) + log_weight for f,log_weight in zip(fs, log_weights)])
+            x0 = locations[sample] 
+            if x0_final is not None:
+                x0 = x0 + (x0_final - x0)*time/times[-1] #make a linear guess
+            mle = minimize(g, x0=x0).x
+            ancestor_locations[s,t] = mle
+ 
     if BLUP_var:
-        return np.array(all_ancestor_locations), np.array(all_ancestor_variances)  
+        return ancestor_locations, ancestor_variances
         
-    return np.array(all_ancestor_locations)
+    return ancestor_locations
 
 def mle_dispersal(locations, shared_times_inverted, shared_times_logdet=None, 
                   sigma0=None, bnds=None, method='L-BFGS-B', callbackF=None,
@@ -151,14 +126,14 @@ def mle_dispersal(locations, shared_times_inverted, shared_times_logdet=None,
                 guess += _mle_dispersal_tree(locations, sts) 
         guess = guess/(L*M) #avg mle over all trees and loci (note that we can avg over all trees and loci simultaneously because same number of trees at every locus)
         x0 = _sigma_to_sds_rho(guess) #convert initial dispersal rate to standard deviations and correlation, to feed into numerical search
-        if BLUP:
+        if BLUP:            
             return x0 #best linear unbiased predictor (returned as sds and corr, like numerical search below)
         x0 = [i/2 for i in x0] #heuristic because the estimate seems to be a consistent overestimate
         if not quiet: print('initial dispersal rate:',x0)
-    else:
-        x0 = sigma0
-
-    # initializing branching rate
+    else:                   
+        x0 = sigma0         
+                            
+    # initializing bran     ching rate
     if important:
         if phi0 is None:
             phi0 = np.mean([np.log(n/(n-len(bts)+1))/bts[-1] for bts in branching_times]) #initial guess at branching rate, from n(t)=n(0)e^(phi*t)

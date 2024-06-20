@@ -138,7 +138,7 @@ rule extract_times:
 # now we process the shared times, potentially cutting off the tree (to ignore distant past) and getting the exact quantities we need for inference
 
 processed_shared_times = shared_times.replace('.stss','_{T}T.{end}')
-ends = ['stss','stss_logdet','stss_inv']
+ends = ['stss_logdet','stss_inv']
 
 rule process_shared_times:
   input:
@@ -171,34 +171,36 @@ rule process_shared_times:
     with open(input.stss, 'r') as stss:
 
       # open files to write to
-      with open(output[0], 'a') as stss_centered:
-        with open(output[1], 'a') as stss_logdet:
-          with open(output[2], 'a') as stss_inverted:
-        
-            # loop over trees at this locus 
-            for sts in tqdm(stss, total=int(wildcards.M)):
+      with open(output[0], 'a') as stss_logdet:
+        with open(output[1], 'a') as stss_inverted:
       
-              # load shared time matrix
-              sts = np.fromstring(sts, dtype=float, sep=',') #convert from string to numpy array
-              sts = chop_shared_times(sts, T=T) #chop shared times to ignore history beyond T
-              k = int((np.sqrt(1+8*len(sts))-1)/2) #get number of samples (from sum_i=0^k i = k(k+1)/2)
-              sts_mat = np.zeros((k,k))
-              sts_mat[np.triu_indices(k, k=0)] = sts #convert to numpy matrix
-              sts_mat = sts_mat + sts_mat.T - np.diag(np.diag(sts_mat))      
+          # loop over trees at this locus 
+          for sts in tqdm(stss, total=int(wildcards.M)):
+      
+            # load shared time matrix in vector form
+            sts = np.fromstring(sts, dtype=float, sep=',') #convert from string to numpy array
 
-              # center
-              sts_mat = center_shared_times(sts_mat) #center
-              sts = sts_mat[np.triu_indices(k-1, k=0)] #convert to list
-              stss_centered.write(",".join([str(round(i)) for i in sts]) + '\n') #append as new line, rounding for space
+            # chop
+            sts = chop_shared_times(sts, T=T) #chop shared times to ignore history beyond T
+
+            # convert to matrix form
+            k = int((np.sqrt(1+8*len(sts))-1)/2) #get number of samples (from sum_i=0^k i = k(k+1)/2)
+            sts_mat = np.zeros((k,k))
+            sts_mat[np.triu_indices(k, k=0)] = sts #convert to numpy matrix
+            sts_mat = sts_mat + sts_mat.T - np.diag(np.diag(sts_mat))      
+            sts = sts_mat
+
+            # center
+            sts = center_shared_times(sts) 
       
-              # determinant
-              sts_mat_logdet = np.linalg.slogdet(sts_mat)[1] #magnitude of log determinant (ignore sign)
-              stss_logdet.write(str(sts_mat_logdet) + '\n') #append as new line 
+            # determinant
+            sts_logdet = np.linalg.slogdet(sts)[1] #magnitude of log determinant (ignore sign)
+            stss_logdet.write(str(sts_logdet) + '\n') #append as new line 
       
-              # inverse
-              sts_mat = np.linalg.inv(sts_mat) #inverse
-              sts = sts_mat[np.triu_indices(k-1, k=0)] #convert to list
-              stss_inverted.write(",".join([str(i) for i in sts]) + '\n') #append as new line
+            # inverse
+            sts = np.linalg.inv(sts) #inverse
+            sts = sts[np.triu_indices(k-1, k=0)] #convert to list
+            stss_inverted.write(",".join([str(i) for i in sts]) + '\n') #append as new line
 
 # ---------------- process coalescence times -----------------------------
 
@@ -265,6 +267,8 @@ rule process_coal_times:
 
 # ----------- composite dispersal rates ------------------------
 
+# and now we bring in our processed times across chromosomes and loci to estimate a dispersal rate
+
 composite_dispersal_rate = processed_shared_times.replace('_chr{CHR}','').replace('_{locus}locus','').replace('{end}','sigma')
 
 rule composite_dispersal_rate:
@@ -295,33 +299,109 @@ rule composite_dispersal_rate:
     from spacetrees import mle_dispersal
 
     # load input data
-    stss_logdet = []
+    stss_logdet = [] #log determinants of chopped and centered shared times matrices
     for f in tqdm(input.stss_logdet):
       stss_logdet.append(np.loadtxt(f))
-    stss_inv = []
+    stss_inv = [] #inverse of chopped and centered shared times matrices, in vector form
     for f in tqdm(input.stss_inv):
       sts_inv = np.loadtxt(f, delimiter=',') #list of vectorized matrices
       k = int((np.sqrt(1+8*len(sts_inv[0]))-1)/2) #get size of matrix (from sum_i=0^k i = k(k+1)/2)
-      sts_inv_mat = []
+      sts_inv_mat = [] #list of inverses in matrix form
       for st_inv in sts_inv:
         mat = np.zeros((k,k))
         mat[np.triu_indices(k, k=0)] = st_inv #convert to numpy matrix
         mat = mat + mat.T - np.diag(np.diag(mat))      
         sts_inv_mat.append(mat)
       stss_inv.append(sts_inv_mat)
-    btss = []
+    btss = [] #branching times
     for f in tqdm(input.btss):
       btss.append(np.loadtxt(f, delimiter=','))
-    lpcs = []
+    lpcs = [] #log probability of coalescence times
     for f in tqdm(input.lpcs):
       lpcs.append(np.loadtxt(f))
     locations = np.loadtxt(input.locations) #location of each sample
-    # make callback function for printing updates
-    def callbackF(x):
-      print('{0: 3.6f}   {1: 3.6f}   {2: 3.6f}   {3: 3.6f}'.format(x[0], x[1], x[2], x[3]))
+
     # estimate dispersal rate
+    def callbackF(x):
+      '''print updates during numerical search'''
+      print('{0: 3.6f}   {1: 3.6f}   {2: 3.6f}   {3: 3.6f}'.format(x[0], x[1], x[2], x[3]))
     sigma = mle_dispersal(locations=locations, shared_times_inverted=stss_inv, shared_times_logdet=stss_logdet,
                           branching_times=btss, logpcoals=lpcs,
                           callbackF=callbackF)
     with open(output.sigma, 'w') as f:
       f.write(','.join([str(i) for i in sigma])) #save variances and covariance
+
+# ----------------------- locate ancestors -----------------------
+
+# finally, we use our processed times and dispersal rate to locate the genetic ancestor at a particular locus for a particular sample and time
+# TODO: it might be better to locate internal nodes of a tree
+
+ancestor_locations = processed_shared_times.replace('.{end}','_{s}s_{t}t.locs')
+
+rule locate_ancestors:
+  input:
+    stss = shared_times,
+    stss_inv = processed_shared_times.replace('{end}','stss_inv'),
+    btss = processed_coal_times.replace('{end}','btss'),
+    lpcs = processed_coal_times.replace('{end}','lpcs'),
+    locations = locations,
+    sigma = composite_dispersal_rate
+  output:
+    ancestor_locations
+  threads: 1
+  resources:
+    runtime=15
+  run:
+    # prevent numpy from using more than {threads} threads (useful for parallizing on my server)
+    import os
+    os.environ["OMP_NUM_THREADS"] = str(threads)
+    os.environ["GOTO_NUM_THREADS"] = str(threads)
+    os.environ["OPENBLAS_NUM_THREADS"] = str(threads)
+    os.environ["MKL_NUM_THREADS"] = str(threads)
+    os.environ["VECLIB_MAXIMUM_THREADS"] = str(threads)
+    os.environ["NUMEXPR_NUM_THREADS"] = str(threads)
+
+    # load tools
+    import numpy as np
+    from tqdm import tqdm
+    from spacetrees import locate_ancestors, _log_birth_density, _sds_rho_to_sigma 
+    from utils import chop_shared_times
+
+    # load input data
+    stss = np.loadtxt(input.stss, delimiter=',') #list of vectorized shared times matrices
+    k = int((np.sqrt(1+8*len(stss[0]))-1)/2) #get size of matrix (from sum_i=0^k i = k(k+1)/2)
+    T = wildcards.T #get time cutoff
+    T = None if T=='None' else float(T) #format correctly
+    stss_mat = [] #list of chopped shared times matrices in matrix form
+    for sts in stss:
+      sts = chop_shared_times(sts, T=T) #chop shared times to ignore history beyond T
+      mat = np.zeros((k,k))
+      mat[np.triu_indices(k, k=0)] = sts #convert to numpy matrix
+      mat = mat + mat.T - np.diag(np.diag(mat))      
+      stss_mat.append(mat)
+    stss = stss_mat
+    stss_inv = np.loadtxt(input.stss_inv, delimiter=',') #list of vectorized chopped centered inverted shared times matrices
+    k = k-1 #get size of matrix
+    stss_inv_mat = [] #list of chopped shared times matrices in matrix form
+    for sts_inv in stss_inv:
+      mat = np.zeros((k,k))
+      mat[np.triu_indices(k, k=0)] = sts_inv #convert to numpy matrix
+      mat = mat + mat.T - np.diag(np.diag(mat))      
+      stss_inv_mat.append(mat)
+    stss_inv = stss_inv_mat
+    btss = np.loadtxt(input.btss, delimiter=',') #branching times
+    lpcs = np.loadtxt(input.lpcs) #log probability of coalescence times
+    locations = np.loadtxt(input.locations) #location of each sample
+    sigma = np.loadtxt(input.sigma, delimiter=',') #mle dispersal rate and branching rate
+    phi = sigma[-1] #branching rate
+    sigma = _sds_rho_to_sigma(sigma[:-1]) #dispersal as covariance matrix
+
+    # importance weights
+    lbds = np.array([_log_birth_density(bts, phi, len(locations)) for bts in btss]) #log probability densities of birth times
+    log_weights = lbds - lpcs #log importance weights
+
+    # locate ancestors
+    ancestor_locations = locate_ancestors(samples=[int(wildcards.s)], times=[float(wildcards.t)], 
+                                          shared_times_chopped=stss, shared_times_chopped_centered_inverted=stss_inv, locations=locations, 
+                                          sigma=sigma, log_weights=log_weights)
+    print(ancestor_locations) 
