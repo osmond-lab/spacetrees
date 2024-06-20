@@ -14,7 +14,11 @@ locations = datadir + 'test.locations' #if individuals are diploid you need to r
 
 CHRS = [1] #list of chromosomes you have anc/mut files for
 m = '1e-8' #estimated mutation rate
-dispersal_loci = [1] #which loci to use to infer dispersal
+dispersal_loci = [1,11,21,31,41,51,61,71,81,91] #which loci to use to infer dispersal
+ancestor_loci = dispersal_loci #which loci to locate ancestors at
+ancestor_times = [10,100,1000] #times in the past to locate ancestors at (if t='All')
+Ms = [10] #number of importance samples at each locus
+Ts = [None, 10000] #time cutoffs
 
 # ---------------- get positions of all loci ------------------------------
 
@@ -75,14 +79,14 @@ rule sample_trees:
                  --seed 1 
     '''
 
-# ---------------- extract shared times from trees -----------------------------
+# ---------------- extract times from trees -----------------------------
 
-# now we will extract the information we need from the trees, the shared times between each pair of lineages
+# now we will extract the information we need from the trees, the shared times between each pair of lineages and the coalescence times
 
 shared_times = newick.replace('.newick','.stss')
 coal_times = newick.replace('.newick','.ctss')
 
-rule shared_times:
+rule extract_times:
   input:
     newick=newick 
   output:
@@ -110,7 +114,7 @@ rule shared_times:
     # open file of trees to read from
     with open(input.newick, mode='r') as f:
       
-      # open file of shared times to append to
+      # open files to append to
       with open(output.stss, 'a') as stss:
         with open(output.ctss, 'a') as ctss:
 
@@ -128,24 +132,25 @@ rule shared_times:
             ordered_samples = [ts.samples()[i] for i in sample_order] #order samples as in relate
             sts = get_shared_times(tree, ordered_samples) #get shared times between all pairs of samples, with rows and columns ordered as in relate
             stss.write(",".join([str(i) for i in sts]) + '\n') #append as new line
-  
+ 
+            # get coalescence times 
             cts = sorted([tree.time(i) for i in tree.nodes() if not tree.is_sample(i)]) #coalescence times, in ascending order
             ctss.write(",".join([str(i) for i in cts]) + '\n') #append as new line
 
-# ---------------- process shared times -----------------------------
+# ---------------- process times -----------------------------
 
-# now we process the shared times, potentially cutting off the tree (to ignore distant past) and getting the exact quantities we need for inference
+# now we process the times, potentially cutting off the tree (to ignore distant past) and getting the exact quantities we need for inference
 
-processed_shared_times = shared_times.replace('.stss','_{T}T.{end}')
+processed_times = shared_times.replace('.stss','_{T}T.{end}')
 ends = ['stss_logdet','stss_inv','btss','lpcs']
 
-rule process_shared_times:
+rule process_times:
   input:
     stss = shared_times,
     ctss = coal_times,
     coal = coal
   output:
-    expand(processed_shared_times, end=ends, allow_missing=True)
+    expand(processed_times, end=ends, allow_missing=True)
   threads: 1 
   resources:
     runtime=15
@@ -228,14 +233,14 @@ rule process_shared_times:
 
 # and now we bring in our processed times across chromosomes and loci to estimate a dispersal rate
 
-dispersal_rate = processed_shared_times.replace('_chr{CHR}','').replace('_{locus}locus','').replace('{end}','sigma')
+dispersal_rate = processed_times.replace('_chr{CHR}','').replace('_{locus}locus','').replace('{end}','sigma')
 
 rule dispersal_rate:
   input:
-    stss_logdet = expand(processed_shared_times, end=['stss_logdet'], CHR=CHRS, locus=dispersal_loci, allow_missing=True),
-    stss_inv = expand(processed_shared_times, end=['stss_inv'], CHR=CHRS, locus=dispersal_loci, allow_missing=True),
-    btss = expand(processed_shared_times, end=['btss'], CHR=CHRS, locus=dispersal_loci, allow_missing=True),
-    lpcs = expand(processed_shared_times, end=['lpcs'], CHR=CHRS, locus=dispersal_loci, allow_missing=True),
+    stss_logdet = expand(processed_times, end=['stss_logdet'], CHR=CHRS, locus=dispersal_loci, allow_missing=True),
+    stss_inv = expand(processed_times, end=['stss_inv'], CHR=CHRS, locus=dispersal_loci, allow_missing=True),
+    btss = expand(processed_times, end=['btss'], CHR=CHRS, locus=dispersal_loci, allow_missing=True),
+    lpcs = expand(processed_times, end=['lpcs'], CHR=CHRS, locus=dispersal_loci, allow_missing=True),
     locations = locations
   output:
     sigma = dispersal_rate
@@ -299,18 +304,18 @@ rule dispersal_rate:
 # finally, we use our processed times and dispersal rate to locate the genetic ancestor at a particular locus for a particular sample and time
 # TODO: it might be better to locate internal nodes of a tree
 
-ancestor_location = processed_shared_times.replace('.{end}','_{s}s_{t}t.locs')
+ancestor_locations = processed_times.replace('.{end}','_{s}s_{t}t.locs')
 
-rule locate_ancestor:
+rule locate_ancestors:
   input:
     stss = shared_times,
-    stss_inv = processed_shared_times.replace('{end}','stss_inv'),
-    btss = processed_shared_times.replace('{end}','btss'),
-    lpcs = processed_shared_times.replace('{end}','lpcs'),
+    stss_inv = processed_times.replace('{end}','stss_inv'),
+    btss = processed_times.replace('{end}','btss'),
+    lpcs = processed_times.replace('{end}','lpcs'),
     locations = locations,
     sigma = dispersal_rate
   output:
-    ancestor_location
+    ancestor_locations
   threads: 1
   resources:
     runtime=15
@@ -327,7 +332,7 @@ rule locate_ancestor:
     # load tools
     import numpy as np
     from tqdm import tqdm
-    from spacetrees import locate_ancestor, _log_birth_density, _sds_rho_to_sigma 
+    from spacetrees import locate_ancestors, _log_birth_density, _sds_rho_to_sigma 
     from utils import chop_shared_times
 
     T = wildcards.T #get time cutoff
@@ -374,10 +379,26 @@ rule locate_ancestor:
     lbds = np.array([_log_birth_density(bts, phi, len(locations)) for bts in btss]) #log probability densities of birth times
     log_weights = lbds - lpcs #log importance weights
 
-    # locate ancestor
-    ancestor_location = locate_ancestor(sample=int(wildcards.s), time=float(wildcards.t), 
-                                        shared_times_chopped=stss, shared_times_chopped_centered_inverted=stss_inv, locations=locations, 
-                                        sigma=sigma, log_weights=log_weights)
-    with open(output[0], 'w') as f:
-      f.write(','.join([str(i) for i in ancestor_location])) #save
+    # locate ancestors
+    s = wildcards.s
+    if s == 'All': #an option to locate the ancestors of all samples
+      samples = range(k+1)   
+    else:
+      samples = [int(s)]
+    t = wildcards.t
+    if t == 'All': #an option to locate at pretermined list of times 
+      times = ancestor_times
+    else: 
+      times = [float(t)]
+    ancestor_locations = locate_ancestors(samples=samples, times=times, 
+                                          shared_times_chopped=stss, shared_times_chopped_centered_inverted=stss_inv, locations=locations, 
+                                          sigma=sigma, log_weights=log_weights)
+    with open(output[0], 'a') as f:
+      for anc_loc in ancestor_locations:
+        f.write(','.join([str(int(anc_loc[0]))] + [str(i) for i in anc_loc[1:]]) + '\n') #save
 
+# ---------------- dummy rule to run everything you need -----------------
+
+rule all:
+  input:
+    expand(ancestor_locations, CHR=CHRS, locus=ancestor_loci, M=Ms, T=Ts, s=['All'], t=['All']) 

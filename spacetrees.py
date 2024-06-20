@@ -5,9 +5,9 @@ import numpy as np
 import math
 from tqdm import tqdm 
 
-def locate_ancestor(sample, time, 
-                    shared_times_chopped, shared_times_chopped_centered_inverted, locations, 
-                    log_weights=[0], sigma=1, x0_final=None, BLUP=False, BLUP_var=False, quiet=False):
+def locate_ancestors(samples, times, 
+                     shared_times_chopped, shared_times_chopped_centered_inverted, locations, 
+                     log_weights=[0], sigma=1, x0_final=None, BLUP=False, BLUP_var=False, quiet=False):
 
     """
     Locate genetic ancestors given sample locations and shared times.
@@ -21,8 +21,8 @@ def locate_ancestor(sample, time,
     except:
         n = len(locations)
         d = 1
-    if not quiet: print('number of trees per locus:',M,'\nnumber of samples:',n,'\nnumber of spatial dimensions:',d,'\n')
-    if not quiet: print('sample:',sample,'\ntime:',time)    
+    if not quiet: print('number of trees per locus:',M,'\nnumber of samples:',n,'\nnumber of spatial dimensions:',d)
+    if not quiet: print('samples:',samples,'\ntimes:',times)
 
     # preprocess locations 
     mean_location = np.mean(locations, axis=0) #mean location
@@ -41,55 +41,59 @@ def locate_ancestor(sample, time,
         stcilc = np.matmul(stci, locations_centered) #a product we will use
         stcilcs.append(stcilc)
 
-    # calculate likelihoods or mles over loci
-    fs = []
-    mles = []
-    bvars = []
-    for stsc, stmr, stm, stcilc in zip(shared_times_chopped, stmrs, stms, stcilcs): #over trees
-    
-        at = _anc_times(stsc, time, sample) #shared times between samples and ancestor of sample at time 
-        atc = np.matmul(Tmat, (at[:-1] - stmr)) #center this
-        taac = at[-1] - 2*np.mean(at[:-1]) + stm #center shared times of ancestor with itself
-        mle = mean_location + np.matmul(atc.transpose(), stcilc) #most likely location
-   
-        # if getting best linear unbiased predictor we collect the mles at each tree (and optionally variance)   
-        if BLUP:
-            mles.append(mle)
-            if BLUP_var:
-                var = (taac - np.matmul(np.matmul(atc.transpose(), stci), atc)) #variance in loc (multiply by sigma later)
-                bvars.append(var)
-        # and otherwise we get the full likelihood at each tree
-        else:
-            var = (taac - np.matmul(np.matmul(atc.transpose(), stci), atc)) * sigma #variance in loc
-            fs.append(lambda x: _lognormpdf(x, mle, var)) #append likelihood
-   
-    # locate ancestor
-    if BLUP:
-        blup = np.zeros(d) 
-        tot_weight = 0
-        # weighted average of mles
-        for mle, log_weight in zip(mles, log_weights):
-             blup += mle * np.exp(log_weight)
-             tot_weight += np.exp(log_weight)
-        mle = blup/tot_weight
-        # weighted average of variances
-        if BLUP_var:
-            blup_var = 0
-            for bvar, log_weight in zip(bvars, log_weights):
-                 blup_var += bvar * np.exp(log_weight)
-            mle = [mle, blup_var/tot_weight]
-    else:
-        # find min of negative of log of summed likelihoods (weighted by importance)
-        def g(x): 
-            return -_logsumexp([f(x) + log_weight for f,log_weight in zip(fs, log_weights)])
-        x0 = locations[sample] 
-        if x0_final is not None:
-            x0 = x0 + (x0_final - x0)*time/times[-1] #make a linear guess
-        mle = minimize(g, x0=x0).x
+    ancestor_locations = []
+    for sample in tqdm(samples):
+        for time in times:
 
-    if not quiet: print('ancestor location:',mle)
- 
-    return mle
+            # calculate likelihoods or mles over loci
+            fs = []
+            mles = []
+            bvars = []
+            for stsc, stmr, stm, stcilc in zip(shared_times_chopped, stmrs, stms, stcilcs): #over trees
+            
+                at = _anc_times(stsc, time, sample) #shared times between samples and ancestor of sample at time 
+                atc = np.matmul(Tmat, (at[:-1] - stmr)) #center this
+                taac = at[-1] - 2*np.mean(at[:-1]) + stm #center shared times of ancestor with itself
+                mle = mean_location + np.matmul(atc.transpose(), stcilc) #most likely location
+           
+                # if getting best linear unbiased predictor we collect the mles at each tree (and optionally variance)   
+                if BLUP:
+                    mles.append(mle)
+                    if BLUP_var:
+                        var = (taac - np.matmul(np.matmul(atc.transpose(), stci), atc)) #variance in loc (multiply by sigma later)
+                        bvars.append(var)
+                # and otherwise we get the full likelihood at each tree
+                else:
+                    var = (taac - np.matmul(np.matmul(atc.transpose(), stci), atc)) * sigma #variance in loc
+                    fs.append(lambda x: _lognormpdf(x, mle, var)) #append likelihood
+           
+            # locate ancestor
+            if BLUP:
+                blup = np.zeros(d) 
+                tot_weight = 0
+                # weighted average of mles
+                for mle, log_weight in zip(mles, log_weights):
+                     blup += mle * np.exp(log_weight)
+                     tot_weight += np.exp(log_weight)
+                mle = blup/tot_weight
+                # weighted average of variances
+                if BLUP_var:
+                    blup_var = 0
+                    for bvar, log_weight in zip(bvars, log_weights):
+                         blup_var += bvar * np.exp(log_weight)
+                    mle = [mle, blup_var/tot_weight]
+            else:
+                # find min of negative of log of summed likelihoods (weighted by importance)
+                def g(x): 
+                    return -_logsumexp([f(x) + log_weight for f,log_weight in zip(fs, log_weights)])
+                x0 = locations[sample] 
+                if x0_final is not None:
+                    x0 = x0 + (x0_final - x0)*time/times[-1] #make a linear guess
+                mle = minimize(g, x0=x0).x
+            
+            ancestor_locations.append(np.append([sample,time],mle))
+        
+    return ancestor_locations
 
 def estimate_dispersal(locations, shared_times_inverted, shared_times_logdet=None, 
                        sigma0=None, bnds=None, method='L-BFGS-B', callbackF=None,
@@ -135,7 +139,7 @@ def estimate_dispersal(locations, shared_times_inverted, shared_times_logdet=Non
     # initializing branching rate
     if important:
         if phi0 is None:
-            phi0 = np.mean([np.log(n/(n-len(bts)+1))/bts[-1] for bts in branching_times]) #initial guess at branching rate, from n(t)=n(0)e^(phi*t)
+            phi0 = np.mean([np.log(n/(n-len(bts)+1))/bts[-1] for btss in branching_times for bts in btss]) #initial guess at branching rate, from n(t)=n(0)e^(phi*t)
             if not quiet: print('initial branching rate:',phi0) 
         if scale_phi is None:
             scale_phi = x0[0]/phi0 #we will search for the value of phi*scale_phi that maximizes the likelihood (putting phi on same scale as dispersal accelarates search) 
