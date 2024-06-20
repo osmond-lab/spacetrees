@@ -21,4 +21,9 @@ Here is how to get set up and run spacetrees, from the command-line:
         - On my server I had to load these tools to build relate, `module load cmake/3.22.5 gcc/11.3.0`.
     	- `cmake ..`
     	- `make` 
-
+- Run spacetrees via snakemake
+	- TODO: lots of detail needed
+- Plot
+	- make virtual environment accessible in Jupyter notebook with `python -m ipykernel install --name $myenv --user` and `venv2jup`
+	- open the Jupyter notebook plot.ipynb. I do this through my server's JupyterHub, https://jupyter.scinet.utoronto.ca/
+	- TODO: detail needed

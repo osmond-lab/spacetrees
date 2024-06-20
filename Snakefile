@@ -75,14 +75,14 @@ rule sample_trees:
                  --seed 1 
     '''
 
-# ---------------- extract times from trees -----------------------------
+# ---------------- extract shared times from trees -----------------------------
 
-# now we will extract the information we need from the trees, the shared times between each pair of lineages and the coalescence times
+# now we will extract the information we need from the trees, the shared times between each pair of lineages
 
 shared_times = newick.replace('.newick','.stss')
 coal_times = newick.replace('.newick','.ctss')
 
-rule extract_times:
+rule shared_times:
   input:
     newick=newick 
   output:
@@ -110,39 +110,40 @@ rule extract_times:
     # open file of trees to read from
     with open(input.newick, mode='r') as f:
       
-      # open files of shared and coalescent times to append to
+      # open file of shared times to append to
       with open(output.stss, 'a') as stss:
         with open(output.ctss, 'a') as ctss:
 
           next(f) #skip header
           for line in tqdm(f, total=int(wildcards.M)): #for each tree sampled
-
+  
             # import tree
             string = line.split()[4] #extract newick string only (Relate adds some info beforehand)
             ts = from_newick(string, min_edge_length=1e-6) #convert to tskit "tree sequence" (only one tree)
             tree = ts.first() #the only tree
-
+  
             # get shared times
             samples = [int(ts.node(node).metadata['name']) for node in ts.samples()] #get index of each sample in list we gave to relate
             sample_order = np.argsort(samples) #get indices to put in ascending order
             ordered_samples = [ts.samples()[i] for i in sample_order] #order samples as in relate
             sts = get_shared_times(tree, ordered_samples) #get shared times between all pairs of samples, with rows and columns ordered as in relate
-            stss.write(",".join([str(round(i)) for i in sts]) + '\n') #append as new line, rounding times to save space
-
-            # get coalescent times
+            stss.write(",".join([str(i) for i in sts]) + '\n') #append as new line
+  
             cts = sorted([tree.time(i) for i in tree.nodes() if not tree.is_sample(i)]) #coalescence times, in ascending order
-            ctss.write(",".join([str(round(i)) for i in cts]) + '\n') #append as new line, rounding times to save space
+            ctss.write(",".join([str(i) for i in cts]) + '\n') #append as new line
 
 # ---------------- process shared times -----------------------------
 
 # now we process the shared times, potentially cutting off the tree (to ignore distant past) and getting the exact quantities we need for inference
 
 processed_shared_times = shared_times.replace('.stss','_{T}T.{end}')
-ends = ['stss_logdet','stss_inv']
+ends = ['stss_logdet','stss_inv','btss','lpcs']
 
 rule process_shared_times:
   input:
-    stss = shared_times 
+    stss = shared_times,
+    ctss = coal_times,
+    coal = coal
   output:
     expand(processed_shared_times, end=ends, allow_missing=True)
   threads: 1 
@@ -160,78 +161,8 @@ rule process_shared_times:
 
     # load tools
     import numpy as np
-    from utils import chop_shared_times, center_shared_times
+    from utils import chop_shared_times, center_shared_times, log_coal_density
     from tqdm import tqdm
-
-    # determine time cutoff
-    T = wildcards.T #get time cutoff
-    T = None if T=='None' else float(T) #format correctly
-
-    # open file of shared times to read from
-    with open(input.stss, 'r') as stss:
-
-      # open files to write to
-      with open(output[0], 'a') as stss_logdet:
-        with open(output[1], 'a') as stss_inverted:
-      
-          # loop over trees at this locus 
-          for sts in tqdm(stss, total=int(wildcards.M)):
-      
-            # load shared time matrix in vector form
-            sts = np.fromstring(sts, dtype=float, sep=',') #convert from string to numpy array
-
-            # chop
-            sts = chop_shared_times(sts, T=T) #chop shared times to ignore history beyond T
-
-            # convert to matrix form
-            k = int((np.sqrt(1+8*len(sts))-1)/2) #get number of samples (from sum_i=0^k i = k(k+1)/2)
-            sts_mat = np.zeros((k,k))
-            sts_mat[np.triu_indices(k, k=0)] = sts #convert to numpy matrix
-            sts_mat = sts_mat + sts_mat.T - np.diag(np.diag(sts_mat))      
-            sts = sts_mat
-
-            # center
-            sts = center_shared_times(sts) 
-      
-            # determinant
-            sts_logdet = np.linalg.slogdet(sts)[1] #magnitude of log determinant (ignore sign)
-            stss_logdet.write(str(sts_logdet) + '\n') #append as new line 
-      
-            # inverse
-            sts = np.linalg.inv(sts) #inverse
-            sts = sts[np.triu_indices(k-1, k=0)] #convert to list
-            stss_inverted.write(",".join([str(i) for i in sts]) + '\n') #append as new line
-
-# ---------------- process coalescence times -----------------------------
-
-# now we process the coalescence times, potentially cutting off the tree (to ignore distant past) and getting the exact quantities we need for inference
-
-processed_coal_times = processed_shared_times 
-ends = ['btss','lpcs']
-
-rule process_coal_times:
-  input:
-    ctss = coal_times,
-    coal = coal
-  output:
-    expand(processed_coal_times, end=ends, allow_missing=True)
-  threads: 1 
-  resources:
-    runtime=15
-  run:
-    # prevent numpy from using more than {threads} threads (useful for parallizing on my server)
-    import os
-    os.environ["OMP_NUM_THREADS"] = str(threads)
-    os.environ["GOTO_NUM_THREADS"] = str(threads)
-    os.environ["OPENBLAS_NUM_THREADS"] = str(threads)
-    os.environ["MKL_NUM_THREADS"] = str(threads)
-    os.environ["VECLIB_MAXIMUM_THREADS"] = str(threads)
-    os.environ["NUMEXPR_NUM_THREADS"] = str(threads)
-
-    # load tools
-    import numpy as np
-    from tqdm import tqdm
-    from utils import log_coal_density
 
     # determine time cutoff
     T = wildcards.T #get time cutoff
@@ -241,45 +172,73 @@ rule process_coal_times:
     epochs = np.genfromtxt(input.coal, skip_header=1, skip_footer=1) #time at which each epoch starts (and the final one ends)
     Nes = 0.5/np.genfromtxt(input.coal, skip_header=2)[2:] #effective population size during each epoch
 
-    #open file of coalescence times to read from
-    with open(input.ctss, 'r') as ctss:
+    # open file of shared times to read from
+    with open(input.stss, 'r') as stss:
+      with open(input.ctss, 'r') as ctss:
 
-      # open files to write to
-      with open(output[0], 'a') as btss:
-        with open(output[1], 'a') as lpcs:
-        
-          # loop over trees at this locus 
-          for cts in tqdm(ctss, total=int(wildcards.M)):
-            cts = np.fromstring(cts, dtype=float, sep=',') #convert from string to numpy array
+        # open files to write to
+        with open(output[0], 'a') as stss_logdet:
+          with open(output[1], 'a') as stss_inverted:
+            with open(output[2], 'a') as btss:
+              with open(output[3], 'a') as lpcs:
+            
+                # loop over trees at this locus 
+                for sts,cts in tqdm(zip(stss,ctss), total=int(wildcards.M)):
+            
+                  # load shared time matrix in vector form
+                  sts = np.fromstring(sts, dtype=float, sep=',') #convert from string to numpy array
+    
+                  # chop
+                  sts = chop_shared_times(sts, T=T) #chop shared times to ignore history beyond T
+                  
+                  # convert to matrix form
+                  k = int((np.sqrt(1+8*(len(sts)-1))+1)/2) #get number of samples (from len(sts) = k(k+1)/2 - k + 1)
+                  sts_mat = np.zeros((k,k)) #initialize matrix
+                  sts_mat[np.triu_indices(k, k=1)] = sts[1:] #fill in upper triangle
+                  sts_mat = sts_mat + sts_mat.T + np.diag([sts[0]]*k) #add lower triangle and diagonal
+                  sts = sts_mat
+    
+                  # center
+                  sts = center_shared_times(sts) 
+            
+                  # determinant
+                  sts_logdet = np.linalg.slogdet(sts)[1] #magnitude of log determinant (ignore sign)
+                  stss_logdet.write(str(sts_logdet) + '\n') #append as new line 
+            
+                  # inverse
+                  sts = np.linalg.inv(sts) #inverse
+                  sts = sts[np.triu_indices(k-1, k=0)] #convert to list
+                  stss_inverted.write(",".join([str(i) for i in sts]) + '\n') #append as new line
 
-            # branching times for branching Brownian model
-            Tmax = cts[-1] #time to most recent common ancestor
-            if T is not None and T < Tmax:
-                Tmax = T #farthest time to go back to
-            bts = Tmax - np.flip(cts) #branching times, in ascending order
-            bts = bts[bts>0] #remove branching times at or before T
-            bts = np.append(bts,Tmax) #append total time as last item      
-            btss.write(",".join([str(i) for i in bts]) + '\n') #append as new line
+                  # branching times
+                  cts = np.fromstring(cts, dtype=float, sep=',') 
+                  Tmax = cts[-1] #time to most recent common ancestor
+                  if T is not None and T < Tmax:
+                      Tmax = T #farthest time to go back to
+                  bts = Tmax - np.flip(cts) #branching times, in ascending order
+                  bts = bts[bts>0] #remove branching times at or before T
+                  bts = np.append(bts, Tmax) #append total time as last item      
+                  btss.write(",".join([str(i) for i in bts]) + '\n') #append as new line
+                  
+                  # probability of coalescence times under neutral coalescent
+                  lpc = log_coal_density(times=cts, Nes=Nes, epochs=epochs, T=Tmax) #log probability density of coalescence times
+                  lpcs.write(str(lpc) + '\n') #append as new line 
 
-            # probability of coalescence times under neutral coalescent
-            lpc = log_coal_density(times=cts, Nes=Nes, epochs=epochs, T=Tmax) #log probability density of coalescence times
-            lpcs.write(str(lpc) + '\n') #append as new line 
-
-# ----------- composite dispersal rates ------------------------
+# ----------- estimate dispersal ------------------------
 
 # and now we bring in our processed times across chromosomes and loci to estimate a dispersal rate
 
-composite_dispersal_rate = processed_shared_times.replace('_chr{CHR}','').replace('_{locus}locus','').replace('{end}','sigma')
+dispersal_rate = processed_shared_times.replace('_chr{CHR}','').replace('_{locus}locus','').replace('{end}','sigma')
 
-rule composite_dispersal_rate:
+rule dispersal_rate:
   input:
     stss_logdet = expand(processed_shared_times, end=['stss_logdet'], CHR=CHRS, locus=dispersal_loci, allow_missing=True),
     stss_inv = expand(processed_shared_times, end=['stss_inv'], CHR=CHRS, locus=dispersal_loci, allow_missing=True),
-    btss = expand(processed_coal_times, end=['btss'], CHR=CHRS, locus=dispersal_loci, allow_missing=True),
-    lpcs = expand(processed_coal_times, end=['lpcs'], CHR=CHRS, locus=dispersal_loci, allow_missing=True),
+    btss = expand(processed_shared_times, end=['btss'], CHR=CHRS, locus=dispersal_loci, allow_missing=True),
+    lpcs = expand(processed_shared_times, end=['lpcs'], CHR=CHRS, locus=dispersal_loci, allow_missing=True),
     locations = locations
   output:
-    sigma = composite_dispersal_rate
+    sigma = dispersal_rate
   threads: 1
   resources:
     runtime=15
@@ -296,7 +255,7 @@ rule composite_dispersal_rate:
     # load tools
     import numpy as np
     from tqdm import tqdm
-    from spacetrees import mle_dispersal
+    from spacetrees import estimate_dispersal
 
     # load input data
     stss_logdet = [] #log determinants of chopped and centered shared times matrices
@@ -315,7 +274,11 @@ rule composite_dispersal_rate:
       stss_inv.append(sts_inv_mat)
     btss = [] #branching times
     for f in tqdm(input.btss):
-      btss.append(np.loadtxt(f, delimiter=','))
+      bts = []
+      with open(f, 'r') as fi:
+        for line in fi:
+          bts.append(np.fromstring(line, dtype=float, sep=','))
+      btss.append(bts)
     lpcs = [] #log probability of coalescence times
     for f in tqdm(input.lpcs):
       lpcs.append(np.loadtxt(f))
@@ -325,29 +288,29 @@ rule composite_dispersal_rate:
     def callbackF(x):
       '''print updates during numerical search'''
       print('{0: 3.6f}   {1: 3.6f}   {2: 3.6f}   {3: 3.6f}'.format(x[0], x[1], x[2], x[3]))
-    sigma = mle_dispersal(locations=locations, shared_times_inverted=stss_inv, shared_times_logdet=stss_logdet,
-                          branching_times=btss, logpcoals=lpcs,
-                          callbackF=callbackF)
+    sigma = estimate_dispersal(locations=locations, shared_times_inverted=stss_inv, shared_times_logdet=stss_logdet,
+                               branching_times=btss, logpcoals=lpcs,
+                               callbackF=callbackF)
     with open(output.sigma, 'w') as f:
-      f.write(','.join([str(i) for i in sigma])) #save variances and covariance
+      f.write(','.join([str(i) for i in sigma])) #save
 
 # ----------------------- locate ancestors -----------------------
 
 # finally, we use our processed times and dispersal rate to locate the genetic ancestor at a particular locus for a particular sample and time
 # TODO: it might be better to locate internal nodes of a tree
 
-ancestor_locations = processed_shared_times.replace('.{end}','_{s}s_{t}t.locs')
+ancestor_location = processed_shared_times.replace('.{end}','_{s}s_{t}t.locs')
 
-rule locate_ancestors:
+rule locate_ancestor:
   input:
     stss = shared_times,
     stss_inv = processed_shared_times.replace('{end}','stss_inv'),
-    btss = processed_coal_times.replace('{end}','btss'),
-    lpcs = processed_coal_times.replace('{end}','lpcs'),
+    btss = processed_shared_times.replace('{end}','btss'),
+    lpcs = processed_shared_times.replace('{end}','lpcs'),
     locations = locations,
-    sigma = composite_dispersal_rate
+    sigma = dispersal_rate
   output:
-    ancestor_locations
+    ancestor_location
   threads: 1
   resources:
     runtime=15
@@ -364,22 +327,25 @@ rule locate_ancestors:
     # load tools
     import numpy as np
     from tqdm import tqdm
-    from spacetrees import locate_ancestors, _log_birth_density, _sds_rho_to_sigma 
+    from spacetrees import locate_ancestor, _log_birth_density, _sds_rho_to_sigma 
     from utils import chop_shared_times
 
-    # load input data
-    stss = np.loadtxt(input.stss, delimiter=',') #list of vectorized shared times matrices
-    k = int((np.sqrt(1+8*len(stss[0]))-1)/2) #get size of matrix (from sum_i=0^k i = k(k+1)/2)
     T = wildcards.T #get time cutoff
     T = None if T=='None' else float(T) #format correctly
+
+    # load input data
+    # shared times
+    stss = np.loadtxt(input.stss, delimiter=',') #list of vectorized shared times matrices
+    k = int((np.sqrt(1+8*len(stss[0])-1)+1)/2) #get size of matrix (from sum_i=0^k i = k(k+1)/2)
     stss_mat = [] #list of chopped shared times matrices in matrix form
     for sts in stss:
       sts = chop_shared_times(sts, T=T) #chop shared times to ignore history beyond T
       mat = np.zeros((k,k))
-      mat[np.triu_indices(k, k=0)] = sts #convert to numpy matrix
-      mat = mat + mat.T - np.diag(np.diag(mat))      
+      mat[np.triu_indices(k, k=1)] = sts[1:] #convert to numpy matrix
+      mat = mat + mat.T + np.diag([sts[0]]*k)      
       stss_mat.append(mat)
     stss = stss_mat
+    # shared times chopped centered inverted
     stss_inv = np.loadtxt(input.stss_inv, delimiter=',') #list of vectorized chopped centered inverted shared times matrices
     k = k-1 #get size of matrix
     stss_inv_mat = [] #list of chopped shared times matrices in matrix form
@@ -389,19 +355,29 @@ rule locate_ancestors:
       mat = mat + mat.T - np.diag(np.diag(mat))      
       stss_inv_mat.append(mat)
     stss_inv = stss_inv_mat
-    btss = np.loadtxt(input.btss, delimiter=',') #branching times
+    # branching times
+    btss = []
+    with open(input.btss, 'r') as f:
+      for line in f:
+        bts = np.fromstring(line, dtype=float, sep=',') #coalescence times in ascending order
+        btss.append(bts)
+    # coal probs
     lpcs = np.loadtxt(input.lpcs) #log probability of coalescence times
+    #locations 
     locations = np.loadtxt(input.locations) #location of each sample
+    # dispersal and branching rate
     sigma = np.loadtxt(input.sigma, delimiter=',') #mle dispersal rate and branching rate
     phi = sigma[-1] #branching rate
     sigma = _sds_rho_to_sigma(sigma[:-1]) #dispersal as covariance matrix
 
-    # importance weights
+    # calculate importance weights
     lbds = np.array([_log_birth_density(bts, phi, len(locations)) for bts in btss]) #log probability densities of birth times
     log_weights = lbds - lpcs #log importance weights
 
-    # locate ancestors
-    ancestor_locations = locate_ancestors(samples=[int(wildcards.s)], times=[float(wildcards.t)], 
-                                          shared_times_chopped=stss, shared_times_chopped_centered_inverted=stss_inv, locations=locations, 
-                                          sigma=sigma, log_weights=log_weights)
-    print(ancestor_locations) 
+    # locate ancestor
+    ancestor_location = locate_ancestor(sample=int(wildcards.s), time=float(wildcards.t), 
+                                        shared_times_chopped=stss, shared_times_chopped_centered_inverted=stss_inv, locations=locations, 
+                                        sigma=sigma, log_weights=log_weights)
+    with open(output[0], 'w') as f:
+      f.write(','.join([str(i) for i in ancestor_location])) #save
+

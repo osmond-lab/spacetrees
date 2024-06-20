@@ -22,9 +22,9 @@ def get_shared_times(tree, samples):
   TMRCA = tree.time(tree.root) #tmrca of tree
   k = len(samples) #number of samples
 
-  sts = [] 
+  sts = [TMRCA] #the diagonal element for all rows
   for i in range(k):
-    for j in range(i,k): #just building upper triangular part of symmetric matrix
+    for j in range(i+1,k): #just building upper triangular part of symmetric matrix, excluding diagonal
       st = TMRCA - tree.tmrca(samples[i],samples[j]) #shared time of pair, ordered to align with locations
       sts.append(st)
 
