@@ -27,7 +27,7 @@ Here is how to get set up and run spacetrees, from the command-line:
 - Plot
 	- make virtual environment accessible in Jupyter notebook with `python -m ipykernel install --name $myenv --user` and `venv2jup`
 	- TODO: some may need to install Jupyter?
-	- open the Jupyter notebook plot.ipynb. I do this through my server's JupyterHub, https://jupyter.scinet.utoronto.ca/
+	- open the Jupyter notebook plots.ipynb. I do this through my server's JupyterHub, https://jupyter.scinet.utoronto.ca/
 	- run the code (command+enter to execute a cell)
 	- TODO: more details needed
 - Get in touch!
