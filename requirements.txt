@@ -82,7 +82,6 @@ toposort==1.10
 tornado==6.4.1
 tqdm==4.66.4
 traitlets==5.14.3
-tsconvert @ file:///gpfs/fs1/home/m/mmosmond/mmosmond/projects/spacetrees-code/tsconvert
 tskit==0.5.6
 typing_extensions==4.12.2
 tzdata==2024.1
