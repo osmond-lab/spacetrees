@@ -1,7 +1,7 @@
 # spacetrees
-Code to estimate dispersal rates and locate genetic ancestors from genome-wide genealogies
+Code to estimate dispersal rates and locate genetic ancestors from genome-wide genealogies.
 
-Formerly referred to as sparg, but that name is now reserved for working with full ancestral recombination graphs (https://github.com/osmond-lab/sparg).
+Formerly referred to as sparg, but that name is now reserved for inferring spatial histories from full ancestral recombination graphs (https://github.com/osmond-lab/sparg).
 
 # set up
 
