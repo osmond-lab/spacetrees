@@ -1,15 +1,19 @@
 #!/bin/bash
 set -e # exit immediately if a command exits with a non-zero status
 
-echo "Creating virtual environment with Python..."
-python -m venv venv
+if [ -d "venv" ]; then
+	echo "Virtual environment already exists. Skipping creation."
+else
+	echo "Creating virtual environment with Python..."
+	python -m venv venv
+fi
 
 echo "activating virtual environment..."
 source venv/bin/activate
 
 echo "Installing required Python packages..."
 pip install --upgrade pip
-pip install -r requirement.txt
+pip install -r requirements.txt
 
 echo "Cloning and installing tsconvert..."
 git clone https://github.com/tskit-dev/tsconvert.git
@@ -51,7 +55,7 @@ else
 fi
 
 echo "Running cmake and make to build Relate..."
-cmake..
+cmake ..
 make
 cd ../..
 
