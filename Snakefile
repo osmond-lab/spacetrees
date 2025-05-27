@@ -193,15 +193,18 @@ rule process_times:
                 # load shared time matrix in vector form
                 sts = np.fromstring(sts, dtype=float, sep=',') #convert from string to numpy array
     
-                # chop
-                sts = chop_shared_times(sts, T=T) #chop shared times to ignore history beyond T
-                
-                # convert to matrix form
-                k = int((np.sqrt(1+8*(len(sts)-1))+1)/2) #get number of samples (from len(sts) = k(k+1)/2 - k + 1)
-                sts_mat = np.zeros((k,k)) #initialize matrix
-                sts_mat[np.triu_indices(k, k=1)] = sts[1:] #fill in upper triangle
-                sts_mat = sts_mat + sts_mat.T + np.diag([sts[0]]*k) #add lower triangle and diagonal
-                sts = sts_mat
+                  # chop
+                  sts = chop_shared_times(sts, T=T) #chop shared times to ignore history beyond T
+                  
+                  # convert to matrix form
+                  #k = int((np.sqrt(1+8*(len(sts)-1))+1)/2) #get number of samples (from len(sts) = k(k+1)/2 - k + 1)
+                  k = int((np.sqrt(1+8*len(sts_inv[0]))-1)/2) #get size of matrix (from sum_i=0^k i = k(k+1)/2), allows for non-contemporary samples
+                  sts_mat = np.zeros((k,k)) #initialize matrix
+                  #sts_mat[np.triu_indices(k, k=1)] = sts[1:] #fill in upper triangle
+                  #sts_mat = sts_mat + sts_mat.T + np.diag([sts[0]]*k) #add lower triangle and diagonal
+                  sts_mat[np.triu_indices(k, k=0)] = sts_mat #convert to numpy matrix
+                  sts_mat = sts_mat + sts_mat.T - np.diag(np.diag(sts_mat)) #fill in all entries
+                  sts = sts_mat
     
                 # center
                 sts = center_shared_times(sts) 
