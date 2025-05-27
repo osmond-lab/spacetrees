@@ -22,9 +22,9 @@ def get_shared_times(tree, samples):
   TMRCA = tree.time(tree.root) #tmrca of tree
   k = len(samples) #number of samples
 
-  sts = [TMRCA] #the diagonal element for all rows
+  sts = []
   for i in range(k):
-    for j in range(i+1,k): #just building upper triangular part of symmetric matrix, excluding diagonal
+    for j in range(i,k): #just building upper triangular part of symmetric matrix, including diagonal in case of non-contemporary samples
       st = TMRCA - tree.tmrca(samples[i],samples[j]) #shared time of pair, ordered to align with locations
       sts.append(st)
 
@@ -32,12 +32,12 @@ def get_shared_times(tree, samples):
 
 def chop_shared_times(shared_times, T=None):
 
-  TMRCA = shared_times[0] #tmrca
+  TMRCA = np.max(shared_times) #tmrca
 
   if T is None or T > TMRCA: #dont cut if dont ask or cut time older than MRCA
     pass
   else:
-    shared_times = T - (TMRCA - shared_times) #calculate shared times since T
+    shared_times = shared_times - (TMRCA - T) #calculate shared times since T
 
   return shared_times
 
