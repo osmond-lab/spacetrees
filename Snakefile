@@ -205,6 +205,10 @@ rule process_times:
                   sts_mat[np.triu_indices(k, k=0)] = sts_mat #convert to numpy matrix
                   sts_mat = sts_mat + sts_mat.T - np.diag(np.diag(sts_mat)) #fill in all entries
                   sts = sts_mat
+                  
+                  # sample times
+                  x = np.diag(sts)
+                  sample_times = np.max(x) - x
     
                   # center
                   sts = center_shared_times(sts) 
@@ -227,9 +231,9 @@ rule process_times:
                   bts = bts[bts>0] #remove branching times at or before T
                   bts = np.append(bts, Tmax) #append total time as last item      
                   btss.write(",".join([str(i) for i in bts]) + '\n') #append as new line
-                  
+                 
                   # probability of coalescence times under neutral coalescent
-                  lpc = log_coal_density(times=cts, Nes=Nes, epochs=epochs, T=Tmax) #log probability density of coalescence times
+                  lpc = log_coal_density(coal_times=cts, sample_times=sample_times, Nes=Nes, epochs=epochs, T=Tmax) #log probability density of coalescence times
                   lpcs.write(str(lpc) + '\n') #append as new line 
 
 # ----------- estimate dispersal ------------------------
