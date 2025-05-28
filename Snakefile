@@ -208,7 +208,8 @@ rule process_times:
                   
                   # sample times
                   x = np.diag(sts)
-                  sample_times = np.max(x) - x
+                  x = np.max(x) - x
+                  sample_times = np.sort(x)
     
                   # center
                   sts = center_shared_times(sts) 
@@ -248,7 +249,8 @@ rule dispersal_rate:
     stss_inv = expand(processed_times, end=['stss_inv'], CHR=CHRS, locus=dispersal_loci, allow_missing=True),
     btss = expand(processed_times, end=['btss'], CHR=CHRS, locus=dispersal_loci, allow_missing=True),
     lpcs = expand(processed_times, end=['lpcs'], CHR=CHRS, locus=dispersal_loci, allow_missing=True),
-    locations = locations
+    locations = locations,
+    sts = shared_times.replace('{CHR}',CHRS[0]).replace('{locus}',dispersal_loci[0], allow_missing=True)
   output:
     sigma = dispersal_rate
   threads: 1
@@ -295,13 +297,22 @@ rule dispersal_rate:
     for f in tqdm(input.lpcs):
       lpcs.append(np.loadtxt(f))
     locations = np.loadtxt(input.locations) #location of each sample
+    # sampling times
+    sts = np.loadtxt(input.sts, delimiter=',')[0] #a vectorized shared times matrix to get sample times from
+    k = int((np.sqrt(1+8*len(stss[0])-1)+1)/2) #get size of matrix (from sum_i=0^k i = k(k+1)/2)
+    mat = np.zeros((k,k))
+    mat[np.triu_indices(k, k=0)] = sts #convert to numpy matrix
+    mat = mat + mat.T - np.diag(np.diag(mat))      
+    x = np.diag(mat) #shared times with self
+    x = np.max(x) - x #sampling times
+    sample_times = np.sort(x) #sampling times in asceding order
 
     # estimate dispersal rate
     def callbackF(x):
       '''print updates during numerical search'''
       print('{0: 3.6f}   {1: 3.6f}   {2: 3.6f}   {3: 3.6f}'.format(x[0], x[1], x[2], x[3]))
     sigma = estimate_dispersal(locations=locations, shared_times_inverted=stss_inv, shared_times_logdet=stss_logdet,
-                               branching_times=btss, logpcoals=lpcs,
+                               branching_times=btss, sample_times=sample_times, logpcoals=lpcs,
                                callbackF=callbackF)
     with open(output.sigma, 'w') as f:
       f.write(','.join([str(i) for i in sigma])) #save
@@ -349,12 +360,20 @@ rule locate_ancestors:
     # shared times
     stss = np.loadtxt(input.stss, delimiter=',') #list of vectorized shared times matrices
     k = int((np.sqrt(1+8*len(stss[0])-1)+1)/2) #get size of matrix (from sum_i=0^k i = k(k+1)/2)
+    mat = np.zeros((k,k))
+    mat[np.triu_indices(k, k=0)] = stss[0] #convert to numpy matrix
+    mat = mat + mat.T - np.diag(np.diag(mat))      
+    x = np.diag(mat) #shared times with self
+    x = np.max(x) - x #sampling times
+    sample_times = np.sort(x) #sampling times in asceding order
     stss_mat = [] #list of chopped shared times matrices in matrix form
     for sts in stss:
       sts = chop_shared_times(sts, T=T) #chop shared times to ignore history beyond T
       mat = np.zeros((k,k))
-      mat[np.triu_indices(k, k=1)] = sts[1:] #convert to numpy matrix
-      mat = mat + mat.T + np.diag([sts[0]]*k)      
+      #mat[np.triu_indices(k, k=1)] = sts[1:] #convert to numpy matrix
+      #mat = mat + mat.T + np.diag([sts[0]]*k)      
+      mat[np.triu_indices(k, k=0)] = sts #convert to numpy matrix
+      mat = mat + mat.T - np.diag(np.diag(mat))      
       stss_mat.append(mat)
     stss = stss_mat
     # shared times chopped centered inverted
@@ -383,7 +402,7 @@ rule locate_ancestors:
     sigma = _sds_rho_to_sigma(sigma[:-1]) #dispersal as covariance matrix
 
     # calculate importance weights
-    lbds = np.array([_log_birth_density(bts, phi, len(locations)) for bts in btss]) #log probability densities of birth times
+    lbds = np.array([_log_birth_density(bts, sample_times, phi) for bts in btss]) #log probability densities of birth times
     log_weights = lbds - lpcs #log importance weights
 
     # locate ancestors
