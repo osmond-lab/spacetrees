@@ -22,9 +22,9 @@ def get_shared_times(tree, samples):
   TMRCA = tree.time(tree.root) #tmrca of tree
   k = len(samples) #number of samples
 
-  sts = [TMRCA] #the diagonal element for all rows
+  sts = []
   for i in range(k):
-    for j in range(i+1,k): #just building upper triangular part of symmetric matrix, excluding diagonal
+    for j in range(i,k): #just building upper triangular part of symmetric matrix, including diagonal in case of non-contemporary samples
       st = TMRCA - tree.tmrca(samples[i],samples[j]) #shared time of pair, ordered to align with locations
       sts.append(st)
 
@@ -32,12 +32,12 @@ def get_shared_times(tree, samples):
 
 def chop_shared_times(shared_times, T=None):
 
-  TMRCA = shared_times[0] #tmrca
+  TMRCA = np.max(shared_times) #tmrca
 
   if T is None or T > TMRCA: #dont cut if dont ask or cut time older than MRCA
     pass
   else:
-    shared_times = T - (TMRCA - shared_times) #calculate shared times since T
+    shared_times = shared_times - (TMRCA - T) #calculate shared times since T
 
   return shared_times
 
@@ -49,36 +49,55 @@ def center_shared_times(shared_times):
  
   return stc
 
-def log_coal_density(times, Nes, epochs=None, T=None):
+def log_coal_density(coal_times, sample_times, Nes, epochs=None, T=None):
 
     """
     log probability of coalescent times under standard neutral/panmictic coalescent
     """
 
     if epochs is None and len(Nes) == 1:
-        epochs = [0, max(times)] #one big epoch
+        epochs = [0, max(coal_times)] #one big epoch
         Nes = [Nes[0], Nes[0]] #repeat the effective population size so same length as epochs 
 
     logp = 0 #initialize log probability
-    prevt = 0 #initialize time
     prevLambda = 0 #initialize coalescent intensity
-    k = len(times) + 1 #number of samples
+    #k = len(times) + 1 #number of samples
     if T is not None:
-        times = times[times < T] #ignore old times
+        coal_times = coal_times[coal_times < T] #ignore coalescence old times
+        sample_times = sample_times[sample_times < T] #ignore old sampling times
+    k = sum(sample_times==0) #number of contemporary samples
+    i = k #index of next sample time
     myIntensityMemos = _coal_intensity_memos(epochs, Nes) #intensities up to end of each epoch
 
     # probability of each coalescence time
-    for t in times: #for each coalescence time t
+    for ct in coal_times: #for each coalescence time
+        while i<len(sample_times) and sample_times[i] < ct: #if next sampling happens before next coalescence
+            kchoose2 = k * (k - 1) / 2 #binomial coefficient
+            Lambda = _coal_intensity_using_memos(sample_times[i], epochs, myIntensityMemos, Nes) #coalescent intensity up to sampling time
+            logpk = - kchoose2 * (Lambda - prevLambda) #log probability of no coalescence
+            logp += logpk #add log probability
+            k += 1 #add the new sample lineage
+            i += 1 #move to next sample time
+            prevLambda = Lambda #update intensity
         kchoose2 = k * (k - 1) / 2 #binomial coefficient
-        Lambda = _coal_intensity_using_memos(t, epochs, myIntensityMemos, Nes) #coalescent intensity up to time t
-        ie = np.digitize(np.array([t]), epochs) #epoch at the time of coalescence
+        Lambda = _coal_intensity_using_memos(ct, epochs, myIntensityMemos, Nes) #coalescent intensity up to coalescence time 
+        ie = np.digitize(np.array([ct]), epochs) #epoch at the time of coalescence
         logpk = np.log(kchoose2 * 1 / (2 * Nes[ie])) - kchoose2 * (Lambda - prevLambda) #log probability (waiting times are time-inhomogeneous exponentially distributed)
         logp += logpk #add log probability
-        prevt = t #update time
         prevLambda = Lambda #update intensity
         k -= 1 #update number of lineages
+   
+    # deal with any remaining sampling 
+    while i < len(sample_times):
+        kchoose2 = k * (k - 1) / 2 #binomial coefficient
+        Lambda = _coal_intensity_using_memos(sample_times[i], epochs, myIntensityMemos, Nes) #coalescent intensity up to sampling time
+        logpk = - kchoose2 * (Lambda - prevLambda) #log probability of no coalescence
+        logp += logpk #add log probability
+        k += 1 #add the new sample lineage
+        i += 1 #move to next sample time
+        prevLambda = Lambda #update intensity
 
-    # now add the probability of lineages not coalescing by T 
+    # now add the probability of any remaining lineages not coalescing by T 
     if k > 1 and T is not None: #if we have more than one lineage remaining
         kchoose2 = k * (k - 1) / 2 #binomial coefficient
         Lambda = _coal_intensity_using_memos(T, epochs, myIntensityMemos, Nes) #coalescent intensity up to time T 

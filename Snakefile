@@ -197,11 +197,19 @@ rule process_times:
                   sts = chop_shared_times(sts, T=T) #chop shared times to ignore history beyond T
                   
                   # convert to matrix form
-                  k = int((np.sqrt(1+8*(len(sts)-1))+1)/2) #get number of samples (from len(sts) = k(k+1)/2 - k + 1)
+                  #k = int((np.sqrt(1+8*(len(sts)-1))+1)/2) #get number of samples (from len(sts) = k(k+1)/2 - k + 1)
+                  k = int((np.sqrt(1+8*len(sts_inv[0]))-1)/2) #get size of matrix (from sum_i=0^k i = k(k+1)/2), allows for non-contemporary samples
                   sts_mat = np.zeros((k,k)) #initialize matrix
-                  sts_mat[np.triu_indices(k, k=1)] = sts[1:] #fill in upper triangle
-                  sts_mat = sts_mat + sts_mat.T + np.diag([sts[0]]*k) #add lower triangle and diagonal
+                  #sts_mat[np.triu_indices(k, k=1)] = sts[1:] #fill in upper triangle
+                  #sts_mat = sts_mat + sts_mat.T + np.diag([sts[0]]*k) #add lower triangle and diagonal
+                  sts_mat[np.triu_indices(k, k=0)] = sts_mat #convert to numpy matrix
+                  sts_mat = sts_mat + sts_mat.T - np.diag(np.diag(sts_mat)) #fill in all entries
                   sts = sts_mat
+                  
+                  # sample times
+                  x = np.diag(sts)
+                  x = np.max(x) - x
+                  sample_times = np.sort(x)
     
                   # center
                   sts = center_shared_times(sts) 
@@ -224,9 +232,9 @@ rule process_times:
                   bts = bts[bts>0] #remove branching times at or before T
                   bts = np.append(bts, Tmax) #append total time as last item      
                   btss.write(",".join([str(i) for i in bts]) + '\n') #append as new line
-                  
+                 
                   # probability of coalescence times under neutral coalescent
-                  lpc = log_coal_density(times=cts, Nes=Nes, epochs=epochs, T=Tmax) #log probability density of coalescence times
+                  lpc = log_coal_density(coal_times=cts, sample_times=sample_times, Nes=Nes, epochs=epochs, T=Tmax) #log probability density of coalescence times
                   lpcs.write(str(lpc) + '\n') #append as new line 
 
 # ----------- estimate dispersal ------------------------
@@ -241,7 +249,8 @@ rule dispersal_rate:
     stss_inv = expand(processed_times, end=['stss_inv'], CHR=CHRS, locus=dispersal_loci, allow_missing=True),
     btss = expand(processed_times, end=['btss'], CHR=CHRS, locus=dispersal_loci, allow_missing=True),
     lpcs = expand(processed_times, end=['lpcs'], CHR=CHRS, locus=dispersal_loci, allow_missing=True),
-    locations = locations
+    locations = locations,
+    sts = shared_times.replace('{CHR}',CHRS[0]).replace('{locus}',dispersal_loci[0], allow_missing=True)
   output:
     sigma = dispersal_rate
   threads: 1
@@ -288,13 +297,22 @@ rule dispersal_rate:
     for f in tqdm(input.lpcs):
       lpcs.append(np.loadtxt(f))
     locations = np.loadtxt(input.locations) #location of each sample
+    # sampling times
+    sts = np.loadtxt(input.sts, delimiter=',')[0] #a vectorized shared times matrix to get sample times from
+    k = int((np.sqrt(1+8*len(stss[0])-1)+1)/2) #get size of matrix (from sum_i=0^k i = k(k+1)/2)
+    mat = np.zeros((k,k))
+    mat[np.triu_indices(k, k=0)] = sts #convert to numpy matrix
+    mat = mat + mat.T - np.diag(np.diag(mat))      
+    x = np.diag(mat) #shared times with self
+    x = np.max(x) - x #sampling times
+    sample_times = np.sort(x) #sampling times in asceding order
 
     # estimate dispersal rate
     def callbackF(x):
       '''print updates during numerical search'''
       print('{0: 3.6f}   {1: 3.6f}   {2: 3.6f}   {3: 3.6f}'.format(x[0], x[1], x[2], x[3]))
     sigma = estimate_dispersal(locations=locations, shared_times_inverted=stss_inv, shared_times_logdet=stss_logdet,
-                               branching_times=btss, logpcoals=lpcs,
+                               branching_times=btss, sample_times=sample_times, logpcoals=lpcs,
                                callbackF=callbackF)
     with open(output.sigma, 'w') as f:
       f.write(','.join([str(i) for i in sigma])) #save
@@ -342,12 +360,20 @@ rule locate_ancestors:
     # shared times
     stss = np.loadtxt(input.stss, delimiter=',') #list of vectorized shared times matrices
     k = int((np.sqrt(1+8*len(stss[0])-1)+1)/2) #get size of matrix (from sum_i=0^k i = k(k+1)/2)
+    mat = np.zeros((k,k))
+    mat[np.triu_indices(k, k=0)] = stss[0] #convert to numpy matrix
+    mat = mat + mat.T - np.diag(np.diag(mat))      
+    x = np.diag(mat) #shared times with self
+    x = np.max(x) - x #sampling times
+    sample_times = np.sort(x) #sampling times in asceding order
     stss_mat = [] #list of chopped shared times matrices in matrix form
     for sts in stss:
       sts = chop_shared_times(sts, T=T) #chop shared times to ignore history beyond T
       mat = np.zeros((k,k))
-      mat[np.triu_indices(k, k=1)] = sts[1:] #convert to numpy matrix
-      mat = mat + mat.T + np.diag([sts[0]]*k)      
+      #mat[np.triu_indices(k, k=1)] = sts[1:] #convert to numpy matrix
+      #mat = mat + mat.T + np.diag([sts[0]]*k)      
+      mat[np.triu_indices(k, k=0)] = sts #convert to numpy matrix
+      mat = mat + mat.T - np.diag(np.diag(mat))      
       stss_mat.append(mat)
     stss = stss_mat
     # shared times chopped centered inverted
@@ -376,7 +402,7 @@ rule locate_ancestors:
     sigma = _sds_rho_to_sigma(sigma[:-1]) #dispersal as covariance matrix
 
     # calculate importance weights
-    lbds = np.array([_log_birth_density(bts, phi, len(locations)) for bts in btss]) #log probability densities of birth times
+    lbds = np.array([_log_birth_density(bts, sample_times, phi) for bts in btss]) #log probability densities of birth times
     log_weights = lbds - lpcs #log importance weights
 
     # locate ancestors
