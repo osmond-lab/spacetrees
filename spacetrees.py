@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 def locate_ancestors(samples, times, 
                      shared_times_chopped, shared_times_chopped_centered_inverted, locations, 
-                     log_weights=[0], sigma=1, x0_final=None, BLUP=False, BLUP_var=False, quiet=False):
+                     log_weights=[0], sigma=1, x0_final=None, BLUP=False, BLUP_var=False, quiet=False, sample_times=None):
 
     """
     Locate genetic ancestors given sample locations and shared times.
@@ -40,6 +40,9 @@ def locate_ancestors(samples, times,
         stms.append(stm)
         stcilc = np.matmul(stci, locations_centered) #a product we will use
         stcilcs.append(stcilc)
+
+    if sample_times is None:
+        sample_times = np.zeros(n) #all contemporary unless otherwise stated
 
     ancestor_locations = []
     for sample in tqdm(samples):
@@ -357,6 +360,8 @@ def _log_likelihoodratio(locations, shared_times_inverted, shared_times_logdet, 
     LLR = _location_loglikelihood(locations, shared_times_inverted, shared_times_logdet, sigma_inverted)
     d,_ = sigma_inverted.shape
     LLR -= k/2 * (d*np.log(2*np.pi) + log_det_sigma)  #can factor this out over subtrees
+    if sample_times is None:
+        sample_times = np.zeros(k+1) #log_birth_density needs to know how many lineages to start with
 
     if important:
         # log probability of branching times given pure birth process with rate phi
@@ -390,7 +395,7 @@ def _log_birth_density(branching_times, sample_times, phi, condition_on_n=True):
     T = branching_times[-1] #storing total time as last entry for convenience
     n = sum(sample_times<T) #number of samples before cutoff
     sample_times = sample_times[sample_times>0] #remove contemporary sample times
-    sample_times = np.reverse(T - sample_times) #forward in time perspective of sampling times
+    sample_times = np.flip(T - sample_times) #forward in time perspective of sampling times
     sample_times = sample_times[sample_times>0] #ignore sampling older than cutoff
     n0 = n - (len(branching_times) - 1) #initial number of lineages (number of samples minus number of coalescence events)
     
@@ -424,7 +429,7 @@ def _log_birth_density(branching_times, sample_times, phi, condition_on_n=True):
         i = 0 #reset index of next sampling time
         prevt = 0
         while i<len(sample_times): 
-            k = n0 + sum(branching_times<sample_times[i]) #number of lineages at next sampling time
+            k = n0 + sum([1 for t in branching_times if t>prevt and t<sample_times[i]]) #number of lineages at next sampling time
             logp -= np.log(math.comb(k - 1, k - n0) * (1 - np.exp(-phi * (sample_times[i]-prevt)))**(k - n0)) - phi * n0 * (sample_times[i]-prevt) # see page 234 of https://www.pitt.edu/~super7/19011-20001/19531.pdf for two different expressions
             prevt = sample_times[i] #update time
             i += 1 #move to next sampling time
