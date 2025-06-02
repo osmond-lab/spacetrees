@@ -4,21 +4,21 @@ datadir = 'data/' #relative path to data directory
 relatedir = 'relate' #path to your version of relate
 
 # we start by assuming you have run Relate's EstimatePopulationSize to get the following files (see https://myersgroup.github.io/relate/modules.html#CoalescenceRate)
-anc = datadir + 'test_chr{CHR}.anc' #name of anc files, with wildcard for chromosome (chr)
-mut = datadir + 'test_chr{CHR}.mut' #name of mut files
+anc = datadir + 'SGDP_aDNA_new_chr2.anc' #name of anc files, with wildcard for chromosome (chr)
+mut = datadir + 'SGDP_aDNA_new_chr2.mut' #name of mut files
 dist = datadir + 'test_chr{CHR}.dist' #name of dist files, only needed if analyzing a subregion of the chromosome, which we are here so that filesizes are small
-coal = datadir + 'test.coal' #name of coal file
+coal = datadir + 'SGDP_v1_annot_ne.coal' #name of coal file
 
 # you also need the locations of every sample in the same order you gave those samples to relate
 locations = datadir + 'test.locations' #if individuals are diploid you need to repeat each location twice
 
-CHRS = [1] #list of chromosomes you have anc/mut files for
-m = '1e-8' #estimated mutation rate
-dispersal_loci = [1,11,21,31,41,51,61,71,81,91] #which loci to use to infer dispersal
+CHRS = [2] #list of chromosomes you have anc/mut files for
+m = '4e-9' #estimated mutation rate
+dispersal_loci = [1] #which loci to use to infer dispersal
 ancestor_loci = dispersal_loci #which loci to locate ancestors at
-ancestor_times = [10,100,1000] #times in the past to locate ancestors at (if t='All')
+#ancestor_times = [10,100,1000] #times in the past to locate ancestors at (if t='All')
 Ms = [10] #number of importance samples at each locus
-Ts = [None, 10000] #time cutoffs
+Ts = [None] #time cutoffs
 
 # ---------------- get positions of all loci ------------------------------
 
@@ -51,7 +51,6 @@ rule sample_trees:
     loci=loci,
     anc=anc,
     mut=mut,
-    dist=dist,
     coal=coal
   output:
     newick 
@@ -68,7 +67,6 @@ rule sample_trees:
     module load gcc/11.3.0 #on my server i had to load the same version i built relate with to run it
     {relatedir}/scripts/SampleBranchLengths/SampleBranchLengths.sh \
                  -i {params.prefix_in} \
-                 --dist {input.dist} \
                  --coal {input.coal} \
                  -o {params.prefix_out} \
                  -m {m} \
@@ -78,6 +76,8 @@ rule sample_trees:
                  --last_bp $stop \
                  --seed 1 
     '''
+    # snakemake data/SGDP_aDNA_new_chr2_1locus_10M.newick -c1
+    #one instance (data/SGDP_aDNA_new_chr2_1locus_10M) took 77 seconds to run
 
 # ---------------- extract times from trees -----------------------------
 
