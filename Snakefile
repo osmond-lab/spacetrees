@@ -4,7 +4,7 @@ datadir = 'data/' #relative path to data directory
 relatedir = 'relate' #path to your version of relate
 
 # we start by assuming you have run Relate's EstimatePopulationSize to get the following files (see https://myersgroup.github.io/relate/modules.html#CoalescenceRate)
-prefix = 'test' #only contemporary samples
+#prefix = 'test' #only contemporary samples
 prefix = 'test_with_ancients' #contemporary and ancient samples
 anc = datadir + prefix + '_chr{CHR}.anc' #name of anc files, with wildcard for chromosome (chr)
 mut = datadir + prefix + '_chr{CHR}.mut' #name of mut files

@@ -1,0 +1,75 @@
+//written for SLiM v4.1
+initialize() {
+
+    defineConstant("sample_generations", MAXT - sample_gens); //flip so sample_gens refers to generations in the past
+    
+    initializeSLiMModelType("nonWF"); // non Wright Fisher
+    initializeSLiMOptions(dimensionality="xy"); // two spatial dimensions
+    initializeTreeSeq(); // record the true tree sequence (can also speed things up)
+
+    initializeMutationRate(0.0); // no mutations (add these in msprime)
+    initializeMutationType("m1", 0.5, "f", 0.0); // irrelevant mutation type
+    initializeGenomicElementType("g1", m1, 1.0); // irrelevant genome type
+    initializeGenomicElement(g1, 0, asInteger(L)-1); // length of chromosome
+    initializeRecombinationRate(RBP); // recombination rate per base
+    
+    // spatial interaction for local competition
+    initializeInteractionType("i1", "xy", reciprocal=T, maxDistance = 3*SIGMAcomp); // define interaction type i1, in two spatial dimensions, where individual A has the same effect on B that B does on A (this speeds up computation), and only individuals within distance 3*SIGMA interact (again to speed things up)  
+    i1.setInteractionFunction("n", 1.0/(2*PI*SIGMAcomp^2), SIGMAcomp); // convert distance to interaction strength using a Gaussian (n for normal), with maximum value 1/(2pi*SIGMA^2) and standard deviation SIGMA (ie, this is truly and normal PDF with mean 0 and variance SIGMA^2) - see section 16.11 of the manual
+    
+    // spatial interaction for mate choice
+    initializeInteractionType("i2", "xy", reciprocal=T, maxDistance = 3*SIGMAmate); 
+    i2.setInteractionFunction("n", 1.0, SIGMAmate); //max is irrelevant, as mates are chosen based on relative strengths
+}
+
+2: first() { //calculate interactions (see section 16.10 of the manual)
+    i1.evaluate(p1); //competition 
+    i2.evaluate(p1); //mate choice
+}
+
+reproduction() {
+    neighbor_density = i1.totalOfNeighborStrengths(individual); // sum of interaction strengths
+    num_offspring = rpois(1, LAMBDA / (1 + neighbor_density / K)); // poisson number of offspring with mean LAMBDA/(1+n_d/K), ie Beverton-Holt density dependence
+    for (i in seqLen(num_offspring)) {
+        if (runif(1) < selfing) { // if selfing
+            offspring = p1.addSelfed(individual);
+            pos = individual.spatialPosition + rnorm(2, 0, SIGMAdisp); // set position of offspring as random normal in both directions
+            offspring.setSpatialPosition(p1.pointReflected(pos)); // put offspring in its place
+        }
+        else { //if not selfing        
+            mate = i2.drawByStrength(individual, 1);  // random mate for each outcrossed offspring 
+            if (size(mate) > 0) { // if there is a mate (possible none within interacting distance, in which case there are no offspring)
+                offspring = p1.addCrossed(individual, mate); //make offspring by sexual reproduction
+                pos = individual.spatialPosition + rnorm(2, 0, SIGMAdisp); // set position of offspring as random normal in both directions
+                offspring.setSpatialPosition(p1.pointReflected(pos)); // put offspring in its place
+            }
+        }
+    }
+}
+    
+1 early() { //initiate pop
+    community.rescheduleScriptBlock(s1, start=MAXT, end=MAXT); //define end point of sim
+    sim.addSubpop("p1", asInteger(round(K * W * W))); //set population size at carrying capacity
+    p1.setSpatialBounds(c(0.0, 0.0, W, W)); //set spatial plane
+    p1.individuals.setSpatialPosition(p1.pointUniform(asInteger(round(K*W*W)))); // start with uniform distribution across range
+}
+
+early() { // survival probabilities
+    inds = sim.subpopulations.individuals;
+    inds[inds.age > 0].fitnessScaling = 0.0; //remove adults to make discrete generations (see section 16.15 of the manual)
+}
+
+late() { //status update
+    if (community.tick % 1000 == 0) {
+        catn(community.tick + "/" + MAXT);
+    }
+    if (any(sample_generations == community.tick)) {
+       sim.treeSeqRememberIndividuals(sample(p1.individuals,1)); //sample an ancient individual
+    }
+}
+
+s1 late () { //end
+    sim.treeSeqOutput(output); //output treesequence
+    catn("Done.");
+    sim.simulationFinished();
+}
