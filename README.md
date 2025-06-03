@@ -1,7 +1,7 @@
 # spacetrees
 Code to estimate dispersal rates and locate genetic ancestors from genome-wide genealogies. Associated with the paper, Osmond & Coop 2024: https://elifesciences.org/articles/72177.
 
-This version of the code has been updated to allow for ancient samples.
+This version of the code has been updated to allow for ancient samples and 3d locations. Data was generated with sim.slim and Snakefile-sims, then renamed for simplicity.
 
 Formerly referred to as sparg, but that name is now reserved for inferring spatial histories from full ancestral recombination graphs (https://github.com/osmond-lab/sparg).
 

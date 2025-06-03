@@ -1,11 +1,12 @@
 # pipeline to infer dispersal rates and locate genetic ancestors with spacetrees (Osmond & Coop 2024)
 
-datadir = 'data/' #relative path to data directory
+datadir = 'old_data/'
+#datadir = 'data/' #relative path to data directory
 relatedir = 'relate' #path to your version of relate
 
 # we start by assuming you have run Relate's EstimatePopulationSize to get the following files (see https://myersgroup.github.io/relate/modules.html#CoalescenceRate)
-#prefix = 'test' #only contemporary samples
-prefix = 'test_with_ancients' #contemporary and ancient samples
+prefix = 'test' #only contemporary samples
+#prefix = 'test_with_ancients' #contemporary and ancient samples
 anc = datadir + prefix + '_chr{CHR}.anc' #name of anc files, with wildcard for chromosome (chr)
 mut = datadir + prefix + '_chr{CHR}.mut' #name of mut files
 dist = datadir + prefix + '_chr{CHR}.dist' #name of dist files, only needed if analyzing a subregion of the chromosome, which we are here so that filesizes are small
@@ -352,7 +353,7 @@ rule locate_ancestors:
     # load tools
     import numpy as np
     from tqdm import tqdm
-    from spacetrees import locate_ancestors, _log_birth_density, _sds_rho_to_sigma 
+    from spacetrees import locate_ancestors, _log_birth_density, _params_to_sigma 
     from utils import chop_shared_times
 
     T = wildcards.T #get time cutoff
@@ -401,7 +402,7 @@ rule locate_ancestors:
     # dispersal and branching rate
     sigma = np.loadtxt(input.sigma, delimiter=',') #mle dispersal rate and branching rate
     phi = sigma[-1] #branching rate
-    sigma = _sds_rho_to_sigma(sigma[:-1]) #dispersal as covariance matrix
+    sigma = _params_to_sigma(sigma[:-1]) #dispersal as covariance matrix
 
     # calculate importance weights
     lbds = np.array([_log_birth_density(bts, sample_times, phi) for bts in btss]) #log probability densities of birth times

@@ -138,9 +138,9 @@ def estimate_dispersal(locations, shared_times_inverted, shared_times_logdet=Non
             for sts in stss: #loop over trees
                 guess += _mle_dispersal_tree(locations, sts) 
         guess = guess/(L*M) #avg mle over all trees and loci (note that we can avg over all trees and loci simultaneously because same number of trees at every locus)
-        x0 = _sigma_to_sds_rho(guess) #convert initial dispersal rate to standard deviations and correlation, to feed into numerical search
+        x0 = _sigma_to_params(guess) #convert initial dispersal rate to standard deviations and correlations, to feed into numerical search
         if BLUP:            
-            return x0 #best linear unbiased predictor (returned as sds and corr, like numerical search below)
+            return x0 #best linear unbiased predictor (returned as sds and corrs, like numerical search below)
         x0 = [i/2 for i in x0] #heuristic because the estimate seems to be a consistent overestimate
         if not quiet: print('initial dispersal rate:',x0)
     else:                   
@@ -161,10 +161,16 @@ def estimate_dispersal(locations, shared_times_inverted, shared_times_logdet=Non
 
     # impose bounds on parameters
     if bnds is None:
-        bnds = [(1e-6,None)] #sdx
+        bnds = [(1e-6,None)] #sd_x
         if d==2:
-            bnds.append((1e-6,None)) #sdy
-            bnds.append((-0.99,0.99)) #corr
+            bnds.append((1e-6,None)) #sd_y
+            bnds.append((-0.99,0.99)) #cor_xy
+        if d==3:
+            bnds.append((1e-6,None)) #sd_y
+            bnds.append((1e-6,None)) #sd_z
+            bnds.append((-0.99,0.99)) #cor_xy
+            bnds.append((-0.99,0.99)) #cor_xz
+            bnds.append((-0.99,0.99)) #cor_yz
         if important:
             bnds.append((1e-6,None)) #scaled phi
 
@@ -181,10 +187,10 @@ def estimate_dispersal(locations, shared_times_inverted, shared_times_logdet=Non
         mle[-1] = mle[-1]/scale_phi #unscale phi
     if not quiet:
         if important:
-            sigma = _sds_rho_to_sigma(mle[:-1]) #convert to covariance matrix
+            sigma = _params_to_sigma(mle[:-1]) #convert to covariance matrix
             print('\nmaximum likelihood branching rate:',mle[-1])
         else:
-            sigma = _sds_rho_to_sigma(mle)
+            sigma = _params_to_sigma(mle)
         print('\nmaximum likelihood dispersal rate:\n',sigma)
 
     return mle 
@@ -244,20 +250,51 @@ def _mle_dispersal_tree(locations, shared_times_inverted):
 
     return np.matmul(np.matmul(np.transpose(locations), shared_times_inverted), locations) / len(locations)
 
-def _sigma_to_sds_rho(sigma):
+def _sigma_to_params(sigma):
 
     """
-    Convert 1x1 or 2x2 covariance matrix to sds and correlation
+    Extract list of parameters from covariance matrix
     """
+
+    sdx = sigma[0,0]**0.5 
     d = len(sigma)
- 
-    sdx = sigma[0,0]**0.5
     if d==1:
-        return [sdx]
-    elif d==2:
-        sdy = sigma[1,1]**0.5
-        rho = sigma[0,1]/(sdx * sdy) #note that small sdx and sdy will raise errors
-        return [sdx, sdy, rho]
+      return [sdx]
+    if d>1:
+      sdy = sigma[1,1]**0.5 
+      corxy = sigma[0,1]/(sdx*sdy)
+    if d==3:
+      sdz = sigma[2,2]**0.5
+      corxz= sigma[0,2]/(sdx*sdz)
+      coryz = sigma[1,2]/(sdy*sdz)
+      return [sdx,sdy,sdz,corxy,corxz,coryz]
+    if d==2:
+      return [sdx,sdy,corxy]
+
+def _params_to_sigma(x):
+
+    """
+    Convert list of parameters to covariance matrix
+    """
+
+    sdx = x[0]
+    if len(x) == 1:
+        return np.array([[sdx**2]])
+    if len(x) == 3:
+        sdy = x[1]
+        rho = x[2]
+        cov = sdx*sdy*rho
+        return np.array([[sdx**2, cov], [cov, sdy**2]])
+    if len(x) == 6:
+        sdy = x[1]
+        sdz = x[2]
+        corxy = x[3]
+        corxz = x[4]
+        coryz = x[5]
+        covxy = sdx*sdy*corxy
+        covxz = sdx*sdz*corxz
+        covyz = sdy*sdz*coryz
+        return np.array([[sdx**2, covxy, covxz], [covxy, sdy**2, covyz], [covxz, covyz, sdz**2]])
 
 def _sum_mc(locations, shared_times_inverted, shared_times_logdet,
             important=False, branching_times=None, sample_times=None, scale_phi=None, logpcoals=None):
@@ -275,10 +312,10 @@ def _sum_mc(locations, shared_times_inverted, shared_times_logdet,
 
         # reformulate parameters
         if important:
-            sigma = _sds_rho_to_sigma(x[:-1])
+            sigma = _params_to_sigma(x[:-1])
             phi = x[-1]/scale_phi
         else:
-            sigma = _sds_rho_to_sigma(x)
+            sigma = _params_to_sigma(x)
             phi = None 
         log_det_sigma = np.linalg.slogdet(sigma)[1] #log of determinant
         sigma_inverted = np.linalg.inv(sigma) #inverse
@@ -293,22 +330,6 @@ def _sum_mc(locations, shared_times_inverted, shared_times_logdet,
         return g
     
     return sumf
-
-def _sds_rho_to_sigma(x):
-
-    """
-    Convert sds and correlation to 1x1 or 2x2 covariance matrix
-    """
-    sdx = x[0]
-    if len(x) == 1:
-        sigma = np.array([[sdx**2]])
-    else:
-        sdy = x[1]
-        rho = x[2]
-        cov = sdx*sdy*rho
-        sigma = np.array([[sdx**2, cov], [cov, sdy**2]])
-
-    return sigma
 
 def _mc(locations, shared_times_inverted, shared_times_logdet, sigma_inverted, log_det_sigma,
         important=False, branching_times=None, sample_times=None, phi=None, logpcoals=None):
