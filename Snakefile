@@ -4,13 +4,15 @@ datadir = 'data/' #relative path to data directory
 relatedir = 'relate' #path to your version of relate
 
 # we start by assuming you have run Relate's EstimatePopulationSize to get the following files (see https://myersgroup.github.io/relate/modules.html#CoalescenceRate)
-anc = datadir + 'SGDP_aDNA_new_chr2.anc' #name of anc files, with wildcard for chromosome (chr)
-mut = datadir + 'SGDP_aDNA_new_chr2.mut' #name of mut files
-dist = datadir + 'test_chr{CHR}.dist' #name of dist files, only needed if analyzing a subregion of the chromosome, which we are here so that filesizes are small
-coal = datadir + 'SGDP_v1_annot_ne.coal' #name of coal file
+prefix = 'test' #only contemporary samples
+prefix = 'SGDP_aDNA_new' #contemporary and ancient samples
+anc = datadir + prefix + '_chr{CHR}.anc' #name of anc files, with wildcard for chromosome (chr)
+mut = datadir + prefix + '_chr{CHR}.mut' #name of mut files
+dist = datadir + prefix + '_chr{CHR}.dist' #name of dist files, only needed if analyzing a subregion of the chromosome, which we are here so that filesizes are small
+coal = datadir + prefix + '.coal' #name of coal file
 
 # you also need the locations of every sample in the same order you gave those samples to relate
-locations = datadir + 'test.locations' #if individuals are diploid you need to repeat each location twice
+locations = datadir + prefix + '.locations' #if individuals are diploid you need to repeat each location twice
 
 CHRS = [2] #list of chromosomes you have anc/mut files for
 m = '4e-9' #estimated mutation rate
@@ -198,11 +200,11 @@ rule process_times:
                   
                   # convert to matrix form
                   #k = int((np.sqrt(1+8*(len(sts)-1))+1)/2) #get number of samples (from len(sts) = k(k+1)/2 - k + 1)
-                  k = int((np.sqrt(1+8*len(sts_inv[0]))-1)/2) #get size of matrix (from sum_i=0^k i = k(k+1)/2), allows for non-contemporary samples
+                  k = int((np.sqrt(1+8*len(sts))-1)/2) #get size of matrix (from sum_i=0^k i = k(k+1)/2), allows for non-contemporary samples
                   sts_mat = np.zeros((k,k)) #initialize matrix
                   #sts_mat[np.triu_indices(k, k=1)] = sts[1:] #fill in upper triangle
                   #sts_mat = sts_mat + sts_mat.T + np.diag([sts[0]]*k) #add lower triangle and diagonal
-                  sts_mat[np.triu_indices(k, k=0)] = sts_mat #convert to numpy matrix
+                  sts_mat[np.triu_indices(k, k=0)] = sts #convert to numpy matrix
                   sts_mat = sts_mat + sts_mat.T - np.diag(np.diag(sts_mat)) #fill in all entries
                   sts = sts_mat
                   
@@ -250,7 +252,11 @@ rule dispersal_rate:
     btss = expand(processed_times, end=['btss'], CHR=CHRS, locus=dispersal_loci, allow_missing=True),
     lpcs = expand(processed_times, end=['lpcs'], CHR=CHRS, locus=dispersal_loci, allow_missing=True),
     locations = locations,
+<<<<<<< HEAD
     sts = shared_times.replace('{CHR}', str(CHRS[0])).replace('{locus}', str(dispersal_loci[0])) #Removed allow_missing
+=======
+    sts = shared_times.replace('{CHR}',str(CHRS[0])).replace('{locus}',str(dispersal_loci[0])) #any chr and locus will do, just getting sampling times
+>>>>>>> ancients
   output:
     sigma = dispersal_rate
   threads: 1
@@ -299,7 +305,7 @@ rule dispersal_rate:
     locations = np.loadtxt(input.locations) #location of each sample
     # sampling times
     sts = np.loadtxt(input.sts, delimiter=',')[0] #a vectorized shared times matrix to get sample times from
-    k = int((np.sqrt(1+8*len(stss[0])-1)+1)/2) #get size of matrix (from sum_i=0^k i = k(k+1)/2)
+    k = int((np.sqrt(1+8*len(sts)-1)+1)/2) #get size of matrix (from sum_i=0^k i = k(k+1)/2)
     mat = np.zeros((k,k))
     mat[np.triu_indices(k, k=0)] = sts #convert to numpy matrix
     mat = mat + mat.T - np.diag(np.diag(mat))      
