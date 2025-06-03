@@ -9,7 +9,7 @@ prefix = 'SGDP_aDNA_new' #contemporary and ancient samples
 anc = datadir + prefix + '_chr{CHR}.anc' #name of anc files, with wildcard for chromosome (chr)
 mut = datadir + prefix + '_chr{CHR}.mut' #name of mut files
 dist = datadir + prefix + '_chr{CHR}.dist' #name of dist files, only needed if analyzing a subregion of the chromosome, which we are here so that filesizes are small
-coal = datadir + prefix + '.coal' #name of coal file
+coal = datadir + 'SGDP_v1_annot_ne.coal' #name of coal file
 
 # you also need the locations of every sample in the same order you gave those samples to relate
 locations = datadir + prefix + '.locations' #if individuals are diploid you need to repeat each location twice
@@ -252,11 +252,7 @@ rule dispersal_rate:
     btss = expand(processed_times, end=['btss'], CHR=CHRS, locus=dispersal_loci, allow_missing=True),
     lpcs = expand(processed_times, end=['lpcs'], CHR=CHRS, locus=dispersal_loci, allow_missing=True),
     locations = locations,
-<<<<<<< HEAD
-    sts = shared_times.replace('{CHR}', str(CHRS[0])).replace('{locus}', str(dispersal_loci[0])) #Removed allow_missing
-=======
     sts = shared_times.replace('{CHR}',str(CHRS[0])).replace('{locus}',str(dispersal_loci[0])) #any chr and locus will do, just getting sampling times
->>>>>>> ancients
   output:
     sigma = dispersal_rate
   threads: 1
