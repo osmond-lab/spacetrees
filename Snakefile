@@ -233,7 +233,7 @@ rule process_times:
                   bts = np.append(bts, Tmax) #append total time as last item      
                   btss.write(",".join([str(i) for i in bts]) + '\n') #append as new line
                  
-                  # probability of coalescence times under neutral coalescent
+                  # probability of coalescence times under neutral coalescent --
                   lpc = log_coal_density(coal_times=cts, sample_times=sample_times, Nes=Nes, epochs=epochs, T=Tmax) #log probability density of coalescence times
                   lpcs.write(str(lpc) + '\n') #append as new line 
 
@@ -250,7 +250,7 @@ rule dispersal_rate:
     btss = expand(processed_times, end=['btss'], CHR=CHRS, locus=dispersal_loci, allow_missing=True),
     lpcs = expand(processed_times, end=['lpcs'], CHR=CHRS, locus=dispersal_loci, allow_missing=True),
     locations = locations,
-    sts = shared_times.replace('{CHR}',CHRS[0]).replace('{locus}',dispersal_loci[0], allow_missing=True)
+    sts = shared_times.replace('{CHR}', str(CHRS[0])).replace('{locus}', str(dispersal_loci[0])) #Removed allow_missing
   output:
     sigma = dispersal_rate
   threads: 1
