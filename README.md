@@ -16,7 +16,7 @@ Here is how to get set up and run spacetrees, from the command-line:
 - Activate virtual environment, `source venv/bin/activate`.
 - Install Python packages, `pip install -r requirements.txt`.
 - Install tsconvert, which isn't available via pip.
-	- `git clone https://github.com/tskit-dev/tsconvert.git`. This was v0.1.dev57+g057435c for me, June 7, 2024.
+	- `git clone https://github.com/tskit-dev/tsconvert.git`. I did this in June 2025.
 	- `cd tsconvert`
 	- `pip install .`
 	- move back to the main working directory, `cd -`
@@ -29,6 +29,7 @@ Here is how to get set up and run spacetrees, from the command-line:
 	- move back to the main working directory, `cd -`
 - Run spacetrees via snakemake
 	- you should now be able to estimate dispersal and locate genetic ancestors with spacetrees via snakemake! simply write `snakemake all -c1` in the command line (-c1 indicates 1 thread, use more if you have them, but this example should run in less than a minute or two with -c1)
+	- on my server I have to run `export XDG_CACHE_HOME=$SCRATCH` first so that snakemake doesn't try to write where it isn't allowed
 	- TODO: lots more detail needed about how to customize your options within Snakefile
 	- TODO: show how to do this when you have multiple chromosomes
 - Plot
