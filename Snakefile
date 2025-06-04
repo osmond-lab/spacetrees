@@ -1,27 +1,28 @@
 # pipeline to infer dispersal rates and locate genetic ancestors with spacetrees (Osmond & Coop 2024)
 
-datadir = 'old_data/'
-#datadir = 'data/' #relative path to data directory
+#datadir = 'old_data/' #testing against old results
+datadir = 'data/' #relative path to data directory
 relatedir = 'relate' #path to your version of relate
 
 # we start by assuming you have run Relate's EstimatePopulationSize to get the following files (see https://myersgroup.github.io/relate/modules.html#CoalescenceRate)
-prefix = 'test' #only contemporary samples
-#prefix = 'test_with_ancients' #contemporary and ancient samples
+#prefix = 'test' #only contemporary samples
+prefix = 'test_with_ancients' #contemporary and ancient samples
 anc = datadir + prefix + '_chr{CHR}.anc' #name of anc files, with wildcard for chromosome (chr)
 mut = datadir + prefix + '_chr{CHR}.mut' #name of mut files
 dist = datadir + prefix + '_chr{CHR}.dist' #name of dist files, only needed if analyzing a subregion of the chromosome, which we are here so that filesizes are small
 coal = datadir + prefix + '.coal' #name of coal file
 
 # you also need the locations of every sample in the same order you gave those samples to relate
-locations = datadir + prefix + '.locations' #if individuals are diploid you need to repeat each location twice
+locations = datadir + prefix + '_{d}d.locations' #if individuals are diploid you need to repeat each location twice
 
 CHRS = [1] #list of chromosomes you have anc/mut files for
 m = '1e-8' #estimated mutation rate
 dispersal_loci = [1,11,21,31,41,51,61,71,81,91] #which loci to use to infer dispersal
 ancestor_loci = dispersal_loci #which loci to locate ancestors at
-ancestor_times = [10,100,1000] #times in the past to locate ancestors at (if t='All')
+ancestor_times = [500,1000] #times in the past to locate ancestors at (if t='All')
 Ms = [10] #number of importance samples at each locus
-Ts = [None, 10000] #time cutoffs
+Ts = [None, 10000, 1000, 100] #time cutoffs
+ds = [2] #number of spatial dimensions
 
 # ---------------- get positions of all loci ------------------------------
 
@@ -244,7 +245,7 @@ rule process_times:
 
 # and now we bring in our processed times across chromosomes and loci to estimate a dispersal rate
 
-dispersal_rate = processed_times.replace('_chr{CHR}','').replace('_{locus}locus','').replace('{end}','sigma')
+dispersal_rate = processed_times.replace('_chr{CHR}','').replace('_{locus}locus','').replace('.{end}','_{d}d.sigma')
 
 rule dispersal_rate:
   input:
@@ -313,7 +314,7 @@ rule dispersal_rate:
     # estimate dispersal rate
     def callbackF(x):
       '''print updates during numerical search'''
-      print('{0: 3.6f}   {1: 3.6f}   {2: 3.6f}   {3: 3.6f}'.format(x[0], x[1], x[2], x[3]))
+      print([round(i,6) for i in x])
     sigma = estimate_dispersal(locations=locations, shared_times_inverted=stss_inv, shared_times_logdet=stss_logdet,
                                branching_times=btss, sample_times=sample_times, logpcoals=lpcs,
                                callbackF=callbackF)
@@ -325,7 +326,7 @@ rule dispersal_rate:
 # finally, we use our processed times and dispersal rate to locate the genetic ancestor at a particular locus for a particular sample and time
 # TODO: it might be better to locate internal nodes of a tree
 
-ancestor_locations = processed_times.replace('.{end}','_{s}s_{t}t.locs')
+ancestor_locations = processed_times.replace('.{end}','_{d}d_{s}s_{t}t.locs')
 
 rule locate_ancestors:
   input:
@@ -430,4 +431,4 @@ rule locate_ancestors:
 
 rule all:
   input:
-    expand(ancestor_locations, CHR=CHRS, locus=ancestor_loci, M=Ms, T=Ts, s=['All'], t=['All']) 
+    expand(ancestor_locations, CHR=CHRS, locus=ancestor_loci, M=Ms, T=Ts, s=['All'], t=['All'], d=ds) 
