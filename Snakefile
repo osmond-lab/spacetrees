@@ -5,9 +5,9 @@ relatedir = 'relate' #path to your version of relate
 
 # we start by assuming you have run Relate's EstimatePopulationSize to get the following files (see https://myersgroup.github.io/relate/modules.html#CoalescenceRate)
 prefix = 'test' #only contemporary samples
-prefix = 'SGDP_aDNA_new' #contemporary and ancient samples
-anc = datadir + prefix + '_chr{CHR}.anc' #name of anc files, with wildcard for chromosome (chr)
-mut = datadir + prefix + '_chr{CHR}.mut' #name of mut files
+prefix = 'SGDP_aDNA_new_filtered' #contemporary and ancient samples
+anc = datadir + 'SGDP_aDNA_new_filtered_chr2.anc' #name of anc files, with wildcard for chromosome (chr)
+mut = datadir + 'SGDP_aDNA_new_filtered_chr2.mut' #name of mut files
 dist = datadir + prefix + '_chr{CHR}.dist' #name of dist files, only needed if analyzing a subregion of the chromosome, which we are here so that filesizes are small
 coal = datadir + 'SGDP_v1_annot_ne.coal' #name of coal file
 
@@ -16,12 +16,14 @@ locations = datadir + prefix + '.locations' #if individuals are diploid you need
 
 CHRS = [2] #list of chromosomes you have anc/mut files for
 m = '4e-9' #estimated mutation rate
-dispersal_loci = [1] #which loci to use to infer dispersal
-ancestor_loci = dispersal_loci #which loci to locate ancestors at
+#dispersal_loci = [1] #which loci to use to infer dispersal
+#ancestor_loci = dispersal_loci #which loci to locate ancestors at
 #ancestor_times = [10,100,1000] #times in the past to locate ancestors at (if t='All')
+from config import dispersal_loci
+from config import ancestor_loci
+from config import ancestor_times
 Ms = [10] #number of importance samples at each locus
 Ts = [None] #time cutoffs
-
 # ---------------- get positions of all loci ------------------------------
 
 loci = anc.replace('.anc','.loci') #filename for list of loci positions, just changing the suffix from 'anc' to 'loci'
@@ -61,7 +63,7 @@ rule sample_trees:
     prefix_out = newick.replace('.newick','') #prefix of outfile (relate adds its own suffix)
   threads: 1
   resources:
-    runtime=15
+    runtime=60
   shell:
     '''
     start=$( awk 'NR=={wildcards.locus} {{print $1}}' {input.loci} ) #position of first snp at locus
@@ -81,6 +83,32 @@ rule sample_trees:
     # snakemake data/SGDP_aDNA_new_chr2_1locus_10M.newick -c1
     #one instance (data/SGDP_aDNA_new_chr2_1locus_10M) took 77 seconds to run
 
+# ------------------- extract subtrees --------------------------------------
+
+rule extract_subtrees:
+  input:
+    anc="data/SGDP_aDNA_new_chr2.anc",
+    mut="data/SGDP_aDNA_new_chr2.mut",
+    poplabels="data/SGDP_contemporary_only.poplabels",
+    pops="data/contemporary_populations.txt"  # file with one population per line
+  output:
+    prefix="data/SGDP_contemporary_only_chr2"
+  resources:
+    runtime=480  # minutes
+  threads: 2
+  shell:
+    """
+    POPS=$(paste -sd, {input.pops})
+    
+    relate/bin/RelateExtract --mode SubTreesForSubpopulation \
+      --anc {input.anc} \
+      --mut {input.mut} \
+      --poplabels {input.poplabels} \
+      --pop_of_interest $POPS \
+      -o {output.prefix}
+    """
+#snakemake extract_subtrees --profile slurm --jobs 10
+
 # ---------------- extract times from trees -----------------------------
 
 # now we will extract the information we need from the trees, the shared times between each pair of lineages and the coalescence times
@@ -96,7 +124,7 @@ rule extract_times:
     ctss=coal_times
   threads: 1
   resources:
-    runtime=15
+    runtime=120
   run:
     # prevent numpy from using more than {threads} threads (useful for parallizing on my server)
     import os
@@ -109,10 +137,13 @@ rule extract_times:
 
     # import tools
     import numpy as np
+    import sys
     from tsconvert import from_newick
     from utils import get_shared_times
     from tqdm import tqdm
-
+    
+    #set recursion limit
+    sys.setrecursionlimit(3000)
     # open file of trees to read from
     with open(input.newick, mode='r') as f:
       
@@ -222,7 +253,7 @@ rule process_times:
             
                   # inverse
                   sts = np.linalg.inv(sts) #inverse
-                  sts = sts[np.triu_indices(k-1, k=0)] #convert to list
+                  sts = sts[np.triu_indices(k-1, k=0)] #HAD TO CHANGE k-1 to k, DOES IT BREAK ANYTHING?
                   stss_inverted.write(",".join([str(i) for i in sts]) + '\n') #append as new line
 
                   # branching times
@@ -238,6 +269,8 @@ rule process_times:
                   # probability of coalescence times under neutral coalescent --
                   lpc = log_coal_density(coal_times=cts, sample_times=sample_times, Nes=Nes, epochs=epochs, T=Tmax) #log probability density of coalescence times
                   lpcs.write(str(lpc) + '\n') #append as new line 
+
+                  #about 3 minutes per job
 
 # ----------- estimate dispersal ------------------------
 
@@ -257,7 +290,7 @@ rule dispersal_rate:
     sigma = dispersal_rate
   threads: 1
   resources:
-    runtime=15
+    runtime=360
   run:
     # prevent numpy from using more than {threads} threads (useful for parallizing on my server)
     import os
@@ -309,6 +342,24 @@ rule dispersal_rate:
     x = np.max(x) - x #sampling times
     sample_times = np.sort(x) #sampling times in asceding order
 
+
+    
+# --- Consistency checks ---
+#    num_samples = locations.shape[0]
+#   assert k == num_samples, f"Mismatch: sampling matrix size ({k}) ≠ number of samples ({num_samples})"
+#   
+#    for i, block in enumerate(stss_inv):
+#        for j, mat in enumerate(block):
+#           assert mat.shape == (num_samples, num_samples), \
+#                f"stss_inv[{i}][{j}] has shape {mat.shape}, expected ({num_samples},{num_samples})"
+#    
+#    for i, logdet in enumerate(stss_logdet):
+#        assert logdet.shape[0] == len(stss_inv[i]), \
+#            f"logdet[{i}] count ({logdet.shape[0]}) ≠ stss_inv[{i}] count ({len(stss_inv[i])})"
+#    
+#    assert len(btss) == len(stss_inv) == len(lpcs) == len(stss_logdet), \
+#        "Mismatch in the number of loci across input lists"
+
     # estimate dispersal rate
     def callbackF(x):
       '''print updates during numerical search'''
@@ -319,26 +370,68 @@ rule dispersal_rate:
     with open(output.sigma, 'w') as f:
       f.write(','.join([str(i) for i in sigma])) #save
 
+# took 5hr 45 min for 100 dispersal loci
+
+# ---------------- convert files to npy to reduce I/O operations -----------------
+processed_prefix_stss = "data/SGDP_aDNA_new_filtered_chr2_{locus}locus_{M}M"
+rule convert_stss_to_npy:
+  input:
+    stss = processed_prefix_stss + ".stss"
+  output:
+    stss_npy = processed_prefix_stss + "_stss.npy"
+  run:
+    import numpy as np
+    arr = np.loadtxt(input.stss, delimiter=',')
+    np.save(output.stss_npy, arr)
+
+
+# processed_times_npy = processed_times.replace('.{end}','_{end}.npy')
+# ends = ['stss_inv','btss','lpcs']
+
+processed_prefix = "data/SGDP_aDNA_new_filtered_chr2_{locus}locus_{M}M_{T}T"
+
+rule convert_to_npy:
+  input:
+    stss_inv = processed_prefix + ".stss_inv",
+    btss     = processed_prefix + ".btss",
+    lpcs     = processed_prefix + ".lpcs"
+  output:
+    stss_inv_npy = processed_prefix + "_stss_inv.npy",
+    btss_npy     = processed_prefix + "_btss.npy",
+    lpcs_npy     = processed_prefix + "_lpcs.npy"
+  run:
+    import numpy as np
+    arr = np.loadtxt(input.stss_inv, delimiter=',')
+    np.save(output.stss_inv_npy, arr)
+    arr = np.loadtxt(input.btss, delimiter=',')
+    np.save(output.btss_npy, arr)
+    arr = np.loadtxt(input.lpcs, delimiter=',')
+    np.save(output.lpcs_npy, arr)
+
 # ----------------------- locate ancestors -----------------------
 
 # finally, we use our processed times and dispersal rate to locate the genetic ancestor at a particular locus for a particular sample and time
 # TODO: it might be better to locate internal nodes of a tree
 
 ancestor_locations = processed_times.replace('.{end}','_{s}s_{t}t.locs')
+processed_prefix = "data/SGDP_aDNA_new_filtered_chr2_{locus}locus_10M_{T}T"
+processed_prefix_stss = "data/SGDP_aDNA_new_filtered_chr2_{locus}locus_{M}M"
 
 rule locate_ancestors:
   input:
-    stss = shared_times,
-    stss_inv = processed_times.replace('{end}','stss_inv'),
-    btss = processed_times.replace('{end}','btss'),
-    lpcs = processed_times.replace('{end}','lpcs'),
+    stss = processed_prefix_stss + "_stss.npy",
+    stss_inv  = processed_prefix + "_stss_inv.npy",
+    btss      = processed_prefix + "_btss.npy",
+    lpcs      = processed_prefix + "_lpcs.npy",
     locations = locations,
     sigma = dispersal_rate
   output:
     ancestor_locations
   threads: 1
   resources:
-    runtime=15
+    runtime=360 #Finished 78% in 2 hours
+  group:
+    "locate"
   run:
     # prevent numpy from using more than {threads} threads (useful for parallizing on my server)
     import os
@@ -360,7 +453,7 @@ rule locate_ancestors:
 
     # load input data
     # shared times
-    stss = np.loadtxt(input.stss, delimiter=',') #list of vectorized shared times matrices
+    stss = np.load(input.stss) #list of vectorized shared times matrices
     k = int((np.sqrt(1+8*len(stss[0])-1)+1)/2) #get size of matrix (from sum_i=0^k i = k(k+1)/2)
     mat = np.zeros((k,k))
     mat[np.triu_indices(k, k=0)] = stss[0] #convert to numpy matrix
@@ -379,7 +472,7 @@ rule locate_ancestors:
       stss_mat.append(mat)
     stss = stss_mat
     # shared times chopped centered inverted
-    stss_inv = np.loadtxt(input.stss_inv, delimiter=',') #list of vectorized chopped centered inverted shared times matrices
+    stss_inv = np.load(input.stss_inv) #list of vectorized chopped centered inverted shared times matrices
     k = k-1 #get size of matrix
     stss_inv_mat = [] #list of chopped shared times matrices in matrix form
     for sts_inv in stss_inv:
@@ -389,13 +482,13 @@ rule locate_ancestors:
       stss_inv_mat.append(mat)
     stss_inv = stss_inv_mat
     # branching times
-    btss = []
-    with open(input.btss, 'r') as f:
-      for line in f:
-        bts = np.fromstring(line, dtype=float, sep=',') #coalescence times in ascending order
-        btss.append(bts)
+    btss = np.load(input.btss)
+    # with open(input.btss, 'r') as f:
+    #   for line in f:
+    #     bts = np.fromstring(line, dtype=float, sep=',') #coalescence times in ascending order
+    #     btss.append(bts)
     # coal probs
-    lpcs = np.loadtxt(input.lpcs) #log probability of coalescence times
+    lpcs = np.load(input.lpcs) #log probability of coalescence times
     #locations 
     locations = np.loadtxt(input.locations) #location of each sample
     # dispersal and branching rate
@@ -424,6 +517,8 @@ rule locate_ancestors:
     with open(output[0], 'a') as f:
       for anc_loc in ancestor_locations:
         f.write(','.join([str(int(anc_loc[0]))] + [str(i) for i in anc_loc[1:]]) + '\n') #save
+
+        # Timing out at 2 hours. Need to increase
 
 # ---------------- dummy rule to run everything you need -----------------
 
