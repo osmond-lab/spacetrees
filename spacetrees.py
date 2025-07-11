@@ -3,10 +3,11 @@ import scipy.sparse as sp
 import time
 import numpy as np
 import math
-from tqdm import tqdm 
+from tqdm import tqdm
+from utils import center_shared_times
 
 def locate_ancestors(samples, times, 
-                     shared_times_chopped, shared_times_chopped_centered_inverted, locations, 
+                     shared_times_chopped, locations, 
                      log_weights=[0], sigma=1, x0_final=None, BLUP=False, BLUP_var=False, quiet=False):
 
     """
@@ -32,12 +33,16 @@ def locate_ancestors(samples, times,
     # preprocess shared times
     stmrs = []
     stms = []
+    stcis = []
     stcilcs = []
-    for stsc, stci in zip(shared_times_chopped, shared_times_chopped_centered_inverted): #over trees
+    for stsc in shared_times_chopped: #over trees
         stmr = np.mean(stsc, axis=1) #average times in each row
         stmrs.append(stmr)
         stm = np.mean(stmr) #average times in whole matrix
         stms.append(stm)
+        stc = center_shared_times(stsc)
+        stci = np.linalg.inv(stc) 
+        stcis.append(stci)
         stcilc = np.matmul(stci, locations_centered) #a product we will use
         stcilcs.append(stcilc)
 
@@ -45,29 +50,29 @@ def locate_ancestors(samples, times,
     for sample in tqdm(samples):
         for time in times:
 
-            # calculate likelihoods or mles over loci
+            # calculate likelihoods or mles over trees
             fs = []
             mles = []
             bvars = []
-            for stsc, stmr, stm, stcilc in zip(shared_times_chopped, stmrs, stms, stcilcs): #over trees
+            for stsc, stci, stmr, stm, stcilc in zip(shared_times_chopped, stcis, stmrs, stms, stcilcs):
             
                 at = _anc_times(stsc, time, sample) #shared times between samples and ancestor of sample at time 
                 atc = np.matmul(Tmat, (at[:-1] - stmr)) #center this
                 taac = at[-1] - 2*np.mean(at[:-1]) + stm #center shared times of ancestor with itself
                 mle = mean_location + np.matmul(atc.transpose(), stcilc) #most likely location
-           
+ 
                 # if getting best linear unbiased predictor we collect the mles at each tree (and optionally variance)   
                 if BLUP:
                     mles.append(mle)
                     if BLUP_var:
-                        var = (taac - np.matmul(np.matmul(atc.transpose(), stci), atc)) #variance in loc (multiply by sigma later)
+                        var = taac - np.matmul(np.matmul(atc.transpose(), stci), atc) #variance in loc (you can multiply by sigma later)
                         bvars.append(var)
                 # and otherwise we get the full likelihood at each tree
                 else:
                     var = (taac - np.matmul(np.matmul(atc.transpose(), stci), atc)) * sigma #variance in loc
                     fs.append(lambda x: _lognormpdf(x, mle, var)) #append likelihood
            
-            # locate ancestor
+            # combine information across trees
             if BLUP:
                 blup = np.zeros(d) 
                 tot_weight = 0
@@ -91,7 +96,7 @@ def locate_ancestors(samples, times,
                     x0 = x0 + (x0_final - x0)*time/times[-1] #make a linear guess
                 mle = minimize(g, x0=x0).x
             
-            ancestor_locations.append(np.append([sample,time],mle))
+            ancestor_locations.append([sample,time,mle])
         
     return ancestor_locations
 
