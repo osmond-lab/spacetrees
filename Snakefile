@@ -309,7 +309,6 @@ ancestor_locations = processed_times.replace('.{end}','_{s}s_{t}t.locs')
 rule locate_ancestors:
   input:
     stss = shared_times,
-    stss_inv = processed_times.replace('{end}','stss_inv'),
     btss = processed_times.replace('{end}','btss'),
     lpcs = processed_times.replace('{end}','lpcs'),
     locations = locations,
@@ -350,16 +349,6 @@ rule locate_ancestors:
       mat = mat + mat.T + np.diag([sts[0]]*k)      
       stss_mat.append(mat)
     stss = stss_mat
-    # shared times chopped centered inverted
-    stss_inv = np.loadtxt(input.stss_inv, delimiter=',') #list of vectorized chopped centered inverted shared times matrices
-    k = k-1 #get size of matrix
-    stss_inv_mat = [] #list of chopped shared times matrices in matrix form
-    for sts_inv in stss_inv:
-      mat = np.zeros((k,k))
-      mat[np.triu_indices(k, k=0)] = sts_inv #convert to numpy matrix
-      mat = mat + mat.T - np.diag(np.diag(mat))      
-      stss_inv_mat.append(mat)
-    stss_inv = stss_inv_mat
     # branching times
     btss = []
     with open(input.btss, 'r') as f:
@@ -391,7 +380,7 @@ rule locate_ancestors:
     else: 
       times = [float(t)]
     ancestor_locations = locate_ancestors(samples=samples, times=times, 
-                                          shared_times_chopped=stss, shared_times_chopped_centered_inverted=stss_inv, locations=locations, 
+                                          shared_times_chopped=stss, locations=locations, 
                                           sigma=sigma, log_weights=log_weights)
     with open(output[0], 'a') as f:
       for anc_loc in ancestor_locations:
