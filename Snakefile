@@ -371,7 +371,7 @@ rule locate_ancestors:
     # locate ancestors
     s = wildcards.s
     if s == 'All': #an option to locate the ancestors of all samples
-      samples = range(k+1)   
+      samples = range(k)   
     else:
       samples = [int(s)]
     t = wildcards.t
