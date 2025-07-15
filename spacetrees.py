@@ -4,10 +4,9 @@ import time
 import numpy as np
 import math
 from tqdm import tqdm
-from utils import center_shared_times
 
 def locate_ancestors(samples, times, 
-                     shared_times_chopped, locations, 
+                     shared_times_chopped, shared_times_chopped_centered_inverted, locations, 
                      log_weights=[0], sigma=1, x0_final=None, BLUP=False, BLUP_var=False, quiet=False):
 
     """
@@ -35,14 +34,11 @@ def locate_ancestors(samples, times,
     stms = []
     stcis = []
     stcilcs = []
-    for stsc in shared_times_chopped: #over trees
+    for stsc,stci in zip(shared_times_chopped, shared_times_chopped_centered_inverted): #over trees
         stmr = np.mean(stsc, axis=1) #average times in each row
         stmrs.append(stmr)
         stm = np.mean(stmr) #average times in whole matrix
         stms.append(stm)
-        stc = center_shared_times(stsc)
-        stci = np.linalg.inv(stc) 
-        stcis.append(stci)
         stcilc = np.matmul(stci, locations_centered) #a product we will use
         stcilcs.append(stcilc)
 
@@ -54,7 +50,7 @@ def locate_ancestors(samples, times,
             fs = []
             mles = []
             bvars = []
-            for stsc, stci, stmr, stm, stcilc in zip(shared_times_chopped, stcis, stmrs, stms, stcilcs):
+            for stsc, stci, stmr, stm, stcilc in zip(shared_times_chopped, shared_times_chopped_centered_inverted, stmrs, stms, stcilcs):
             
                 at = _anc_times(stsc, time, sample) #shared times between samples and ancestor of sample at time 
                 atc = np.matmul(Tmat, (at[:-1] - stmr)) #center this
@@ -86,7 +82,7 @@ def locate_ancestors(samples, times,
                     blup_var = 0
                     for bvar, log_weight in zip(bvars, log_weights):
                          blup_var += bvar * np.exp(log_weight)
-                    mle = [mle, blup_var/tot_weight]
+                    mle = np.append(mle, blup_var/tot_weight)
             else:
                 # find min of negative of log of summed likelihoods (weighted by importance)
                 def g(x): 
@@ -96,7 +92,7 @@ def locate_ancestors(samples, times,
                     x0 = x0 + (x0_final - x0)*time/times[-1] #make a linear guess
                 mle = minimize(g, x0=x0).x
             
-            ancestor_locations.append([sample,time,mle])
+            ancestor_locations.append([sample,time] + [float(i) for i in mle])
         
     return ancestor_locations
 
