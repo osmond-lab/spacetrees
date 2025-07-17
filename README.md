@@ -1,6 +1,8 @@
 # spacetrees
 Code to estimate dispersal rates and locate genetic ancestors from genome-wide genealogies. Associated with the paper, Osmond & Coop 2024: https://elifesciences.org/articles/72177.
 
+This version of the code has been updated to allow for ancient samples.
+
 Formerly referred to as sparg, but that name is now reserved for inferring spatial histories from full ancestral recombination graphs (https://github.com/osmond-lab/sparg).
 
 # set up
@@ -18,8 +20,8 @@ Here is how to get set up and run spacetrees, from the command-line:
 	- `cd tsconvert`
 	- `pip install .`
 	- move back to the main working directory, `cd -`
-- Install Relate. I used v1.2.1. See https://myersgroup.github.io/relate/index.html for more info and options.
-	- On my server I downloaded the source code with `git clone https://github.com/MyersGroup/relate.git` on June 7, 2024. This is roughly version 1.2.1.
+- Install Relate. See https://myersgroup.github.io/relate/index.html for more info and options.
+	- On my server I downloaded the source code with `git clone https://github.com/MyersGroup/relate.git` in June 2025. This is roughly version 1.2.2.
 	- Move into the Relate directory, `cd relate/build`.
         - On my server I had to load these tools to build relate, `module load cmake/3.22.5 gcc/11.3.0`.
     	- `cmake ..`
@@ -32,7 +34,7 @@ Here is how to get set up and run spacetrees, from the command-line:
 - Plot
 	- make virtual environment accessible in Jupyter notebook with `python -m ipykernel install --name $myenv --user` and `venv2jup`
 	- TODO: some may need to install Jupyter?
-	- open the Jupyter notebook plots.ipynb. I do this through my server's JupyterHub, https://jupyter.scinet.utoronto.ca/
+	- open the Jupyter notebook plots.ipynb. I do this through my server's JupyterHub, https://ondemand.scinet.utoronto.ca
 	- run the code (command+enter to execute a cell)
 - Get in touch!
 	- I'd love to hear if you are using this software, have any suggested improvements, or need any help: mm.osmond@utoronto.ca
