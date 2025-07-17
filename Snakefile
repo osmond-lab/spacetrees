@@ -427,8 +427,90 @@ rule locate_ancestors:
       for anc_loc in ancestor_locations:
         f.write(','.join([str(int(anc_loc[0]))] + [str(i) for i in anc_loc[1:]]) + '\n') #save
 
+# ----------------------- locate ancestors blup w/o weights -----------------------
+
+# we can also get a rough estimate of ancestor locations by averaging mles over trees at a locus, ignoring importance weights (we can do all this without ever estimating dispersal)
+
+ancestor_locations_blup_weightless = processed_times.replace('{end}','_{s}s_{t}t.blup_weightless_locs')
+
+rule locate_ancestors_blup_weightless:
+  input:
+    stss = shared_times,
+    stss_inv = processed_times.replace('{end}','_stss_inv.npy'),
+    locations = locations,
+  output:
+    ancestor_locations_blup_weightless
+  threads: 1
+  group:
+    "blup_weightless"
+  resources:
+    runtime=30
+  run:
+    # prevent numpy from using more than {threads} threads (useful for parallizing on my server)
+    import os
+    os.environ["OMP_NUM_THREADS"] = str(threads)
+    os.environ["GOTO_NUM_THREADS"] = str(threads)
+    os.environ["OPENBLAS_NUM_THREADS"] = str(threads)
+    os.environ["MKL_NUM_THREADS"] = str(threads)
+    os.environ["VECLIB_MAXIMUM_THREADS"] = str(threads)
+    os.environ["NUMEXPR_NUM_THREADS"] = str(threads)
+
+    # load tools
+    import numpy as np
+    from tqdm import tqdm
+    from spacetrees import locate_ancestors
+    from utils import chop_shared_times
+
+    T = wildcards.T #get time cutoff
+    T = None if T=='None' else float(T) #format correctly
+
+    # load input data
+    # shared times
+    stss = np.loadtxt(input.stss, delimiter=',') #list of vectorized shared times matrices
+    k = int((np.sqrt(1+8*len(stss[0])-1)+1)/2) #get size of matrix (from sum_i=0^k i = k(k+1)/2)
+    stss_mat = [] #list of chopped shared times matrices in matrix form
+    for sts in stss:
+      sts = chop_shared_times(sts, T=T) #chop shared times to ignore history beyond T
+      mat = np.zeros((k,k))
+      mat[np.triu_indices(k, k=1)] = sts[1:] #convert to numpy matrix
+      mat = mat + mat.T + np.diag([sts[0]]*k)      
+      stss_mat.append(mat)
+    stss = stss_mat
+    # shared times centered and inverted
+    stss_inv = np.load(input.stss_inv) #list of vectorized matrices
+    k = k-1 #drop a sample because centered
+    stss_inv_mat = [] #list of inverses in matrix form
+    for sts_inv in stss_inv:
+      mat = np.zeros((k,k))
+      mat[np.triu_indices(k, k=0)] = sts_inv #convert to numpy matrix
+      mat = mat + mat.T - np.diag(np.diag(mat))      
+      stss_inv_mat.append(mat)
+    stss_inv = stss_inv_mat
+
+    log_weights = [0] * int(wildcards.M)
+    locations = np.loadtxt(input.locations)
+
+    # locate ancestors
+    s = wildcards.s
+    if s == 'All': #an option to locate the ancestors of all samples
+      samples = range(k+1)   
+    else:
+      samples = [int(s)]
+    t = wildcards.t
+    if t == 'All': #an option to locate at pretermined list of times 
+      times = ancestor_times
+    else: 
+      times = [float(t)]
+    ancestor_locations = locate_ancestors(samples=samples, times=times, 
+                                          shared_times_chopped=stss, shared_times_chopped_centered_inverted=stss_inv, locations=locations, 
+                                          log_weights=log_weights, BLUP=True, BLUP_var=True)
+    with open(output[0], 'a') as f:
+      for anc_loc in ancestor_locations:
+        f.write(','.join([str(int(anc_loc[0]))] + [str(i) for i in anc_loc[1:]]) + '\n') #save
+
 # ---------------- dummy rule to run everything you need -----------------
 
 rule all:
   input:
-    expand(ancestor_locations, CHR=CHRS, locus=ancestor_loci, M=Ms, T=Ts, s=['All'], t=['All']) 
+    expand(ancestor_locations, CHR=CHRS, locus=ancestor_loci, M=Ms, T=Ts, s=['All'], t=['All']),
+    expand(ancestor_locations_blup_weightless, CHR=CHRS, locus=ancestor_loci, M=Ms, T=Ts, s=['All'], t=['All'])
