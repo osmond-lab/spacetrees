@@ -3,11 +3,11 @@ import scipy.sparse as sp
 import time
 import numpy as np
 import math
-from tqdm import tqdm
+from tqdm import tqdm 
 
 def locate_ancestors(samples, times, 
                      shared_times_chopped, shared_times_chopped_centered_inverted, locations, 
-                     log_weights=[0], sigma=1, x0_final=None, BLUP=False, BLUP_var=False, quiet=False):
+                     log_weights=None, sigma=1, x0_final=None, BLUP=False, BLUP_var=False, quiet=False, sample_times=None):
 
     """
     Locate genetic ancestors given sample locations and shared times.
@@ -32,9 +32,8 @@ def locate_ancestors(samples, times,
     # preprocess shared times
     stmrs = []
     stms = []
-    stcis = []
     stcilcs = []
-    for stsc,stci in zip(shared_times_chopped, shared_times_chopped_centered_inverted): #over trees
+    for stsc, stci in zip(shared_times_chopped, shared_times_chopped_centered_inverted): #over trees
         stmr = np.mean(stsc, axis=1) #average times in each row
         stmrs.append(stmr)
         stm = np.mean(stmr) #average times in whole matrix
@@ -42,55 +41,70 @@ def locate_ancestors(samples, times,
         stcilc = np.matmul(stci, locations_centered) #a product we will use
         stcilcs.append(stcilc)
 
+    if log_weights is None:
+      log_weights = [0] * M #set all weights equal
+
+    if sample_times is None:
+        sample_times = np.zeros(n) #all contemporary unless otherwise stated
+
     ancestor_locations = []
     for sample in tqdm(samples):
         for time in times:
 
-            # calculate likelihoods or mles over trees
-            fs = []
-            mles = []
-            bvars = []
-            for stsc, stci, stmr, stm, stcilc in zip(shared_times_chopped, shared_times_chopped_centered_inverted, stmrs, stms, stcilcs):
-            
-                at = _anc_times(stsc, time, sample) #shared times between samples and ancestor of sample at time 
-                atc = np.matmul(Tmat, (at[:-1] - stmr)) #center this
-                taac = at[-1] - 2*np.mean(at[:-1]) + stm #center shared times of ancestor with itself
-                mle = mean_location + np.matmul(atc.transpose(), stcilc) #most likely location
- 
-                # if getting best linear unbiased predictor we collect the mles at each tree (and optionally variance)   
-                if BLUP:
-                    mles.append(mle)
-                    if BLUP_var:
-                        var = taac - np.matmul(np.matmul(atc.transpose(), stci), atc) #variance in loc (you can multiply by sigma later)
-                        bvars.append(var)
-                # and otherwise we get the full likelihood at each tree
-                else:
-                    var = (taac - np.matmul(np.matmul(atc.transpose(), stci), atc)) * sigma #variance in loc
-                    fs.append(lambda x: _lognormpdf(x, mle, var)) #append likelihood
+            if time < sample_times[sample]:
            
-            # combine information across trees
-            if BLUP:
-                blup = np.zeros(d) 
-                tot_weight = 0
-                # weighted average of mles
-                for mle, log_weight in zip(mles, log_weights):
-                     blup += mle * np.exp(log_weight)
-                     tot_weight += np.exp(log_weight)
-                mle = blup/tot_weight
-                # weighted average of variances
+                print('trying to locate ancestor more recent than sample')
+                mle = [np.nan] * d 
                 if BLUP_var:
-                    blup_var = 0
-                    for bvar, log_weight in zip(bvars, log_weights):
-                         blup_var += bvar * np.exp(log_weight)
-                    mle = np.append(mle, blup_var/tot_weight)
+                    mle.append(np.nan)
+
             else:
-                # find min of negative of log of summed likelihoods (weighted by importance)
-                def g(x): 
-                    return -_logsumexp([f(x) + log_weight for f,log_weight in zip(fs, log_weights)])
-                x0 = locations[sample] 
-                if x0_final is not None:
-                    x0 = x0 + (x0_final - x0)*time/times[-1] #make a linear guess
-                mle = minimize(g, x0=x0).x
+
+                # calculate likelihoods or mles over trees
+                fs = []
+                mles = []
+                bvars = []
+                for stsc, stci, stmr, stm, stcilc in zip(shared_times_chopped, shared_times_chopped_centered_inverted, stmrs, stms, stcilcs):
+                
+                    at = _anc_times(stsc, time, sample) #shared times between samples and ancestor of sample at time 
+                    atc = np.matmul(Tmat, (at[:-1] - stmr)) #center this
+                    taac = at[-1] - 2*np.mean(at[:-1]) + stm #center shared times of ancestor with itself
+                    mle = mean_location + np.matmul(atc.transpose(), stcilc) #most likely location
+               
+                    # if getting best linear unbiased predictor we collect the mles at each tree (and optionally variance)   
+                    if BLUP:
+                        mles.append(mle)
+                        if BLUP_var:
+                            var = (taac - np.matmul(np.matmul(atc.transpose(), stci), atc)) #variance in loc (multiply by sigma later)
+                            bvars.append(var)
+                    # and otherwise we get the full likelihood at each tree
+                    else:
+                        var = (taac - np.matmul(np.matmul(atc.transpose(), stci), atc)) * sigma #variance in loc
+                        fs.append(lambda x: _lognormpdf(x, mle, var)) #append likelihood
+               
+                # locate ancestor
+                if BLUP:
+                    blup = np.zeros(d) 
+                    tot_weight = 0
+                    # weighted average of mles
+                    for mle, log_weight in zip(mles, log_weights):
+                         blup += mle * np.exp(log_weight)
+                         tot_weight += np.exp(log_weight)
+                    mle = blup/tot_weight
+                    # weighted average of variances
+                    if BLUP_var:
+                        blup_var = 0
+                        for bvar, log_weight in zip(bvars, log_weights):
+                             blup_var += bvar * np.exp(log_weight)
+                        mle = np.append(mle, blup_var/tot_weight)
+                else:
+                    # find min of negative of log of summed likelihoods (weighted by importance)
+                    def g(x): 
+                        return -_logsumexp([f(x) + log_weight for f,log_weight in zip(fs, log_weights)])
+                    x0 = locations[sample] 
+                    if x0_final is not None:
+                        x0 = x0 + (x0_final - x0)*time/times[-1] #make a linear guess
+                    mle = minimize(g, x0=x0).x
             
             ancestor_locations.append([sample,time] + [float(i) for i in mle])
         
@@ -98,7 +112,7 @@ def locate_ancestors(samples, times,
 
 def estimate_dispersal(locations, shared_times_inverted, shared_times_logdet=None, 
                        sigma0=None, bnds=None, method='L-BFGS-B', callbackF=None,
-                       important=True, branching_times=None, phi0=None, scale_phi=None, logpcoals=None,
+                       important=True, branching_times=None, sample_times=None, phi0=None, scale_phi=None, logpcoals=None,
                        quiet=False, BLUP=False):
 
     """
@@ -140,7 +154,7 @@ def estimate_dispersal(locations, shared_times_inverted, shared_times_logdet=Non
     # initializing branching rate
     if important:
         if phi0 is None:
-            phi0 = np.mean([np.log(n/(n-len(bts)+1))/bts[-1] for btss in branching_times for bts in btss]) #initial guess at branching rate, from n(t)=n(0)e^(phi*t)
+            phi0 = np.mean([np.log(n/(n-len(bts)+1))/bts[-1] for btss in branching_times for bts in btss]) #initial guess at branching rate, from n(t)=n(0)e^(phi*t) - assumes all samples contemporary but just a rough estimate anyhow
             if not quiet: print('initial branching rate:',phi0) 
         if scale_phi is None:
             scale_phi = x0[0]/phi0 #we will search for the value of phi*scale_phi that maximizes the likelihood (putting phi on same scale as dispersal accelarates search) 
@@ -148,7 +162,7 @@ def estimate_dispersal(locations, shared_times_inverted, shared_times_logdet=Non
         
     # negative composite log likelihood ratio, as function of x
     f = _sum_mc(locations=locations_vector, shared_times_inverted=shared_times_inverted, shared_times_logdet=shared_times_logdet,
-                important=important, branching_times=branching_times, scale_phi=scale_phi, logpcoals=logpcoals)
+                important=important, branching_times=branching_times, sample_times=sample_times, scale_phi=scale_phi, logpcoals=logpcoals)
 
     # impose bounds on parameters
     if bnds is None:
@@ -200,7 +214,7 @@ def _anc_times(shared_times, ancestor_time, sample):
     get shared times with ancestor 
     """
     
-    taa = shared_times[0,0] - ancestor_time #shared time of ancestor with itself 
+    taa = np.max(shared_times) - ancestor_time #shared time of ancestor with itself 
 
     anc_times = [] 
     for t in shared_times[sample]:
@@ -251,7 +265,7 @@ def _sigma_to_sds_rho(sigma):
         return [sdx, sdy, rho]
 
 def _sum_mc(locations, shared_times_inverted, shared_times_logdet,
-            important=False, branching_times=None, scale_phi=None, logpcoals=None):
+            important=False, branching_times=None, sample_times=None, scale_phi=None, logpcoals=None):
 
     """
     Negative log composite likelihood of parameters x given the locations and shared times at all loci and subtrees, as function of x.
@@ -280,7 +294,7 @@ def _sum_mc(locations, shared_times_inverted, shared_times_logdet,
         for sti, ldst, bts, lpcs in zip(shared_times_inverted, shared_times_logdet, branching_times, logpcoals): #loop over loci
             g -= _mc(locations=locations, shared_times_inverted=sti, shared_times_logdet=ldst,
                      sigma_inverted=sigma_inverted, log_det_sigma=log_det_sigma,
-                     important=important, branching_times=bts, phi=phi, logpcoals=lpcs)
+                     important=important, branching_times=bts, sample_times=sample_times, phi=phi, logpcoals=lpcs)
         return g
     
     return sumf
@@ -302,7 +316,7 @@ def _sds_rho_to_sigma(x):
     return sigma
 
 def _mc(locations, shared_times_inverted, shared_times_logdet, sigma_inverted, log_det_sigma,
-        important=False, branching_times=None, phi=None, logpcoals=None):
+        important=False, branching_times=None, sample_times=None, phi=None, logpcoals=None):
 
     """
     Monte Carlo estimate of log of likelihood ratio of the locations given parameters (sigma,phi) vs data given standard coalescent, for a given locus
@@ -340,7 +354,7 @@ def _logsumexp(a):
     return out
 
 def _log_likelihoodratio(locations, shared_times_inverted, shared_times_logdet, sigma_inverted, log_det_sigma,
-                         important=False, branching_times=None, phi=None, logpcoals=None):
+                         important=False, branching_times=None, sample_times=None, phi=None, logpcoals=None):
 
     """ 
     Log of likelihood ratio of parameters under branching brownian motion vs standard coalescent.
@@ -351,10 +365,12 @@ def _log_likelihoodratio(locations, shared_times_inverted, shared_times_logdet, 
     LLR = _location_loglikelihood(locations, shared_times_inverted, shared_times_logdet, sigma_inverted)
     d,_ = sigma_inverted.shape
     LLR -= k/2 * (d*np.log(2*np.pi) + log_det_sigma)  #can factor this out over subtrees
+    if sample_times is None:
+        sample_times = np.zeros(k+1) #log_birth_density needs to know how many lineages to start with
 
     if important:
         # log probability of branching times given pure birth process with rate phi
-        LLR += _log_birth_density(branching_times=branching_times, phi=phi, n=k+1) 
+        LLR += _log_birth_density(branching_times=branching_times, sample_times=sample_times, phi=phi) 
         # log probability of coalescence times given standard coalescent (precalculated as parameter-independent)
         LLR -= logpcoals
     
@@ -375,29 +391,53 @@ def _location_loglikelihood(locations, shared_times_inverted, shared_times_logde
 
     return -0.5 * (logcoeff + exponent) #add the two terms together and multiply by -1/2
 
-def _log_birth_density(branching_times, phi, n, condition_on_n=True):
+def _log_birth_density(branching_times, sample_times, phi, condition_on_n=True):
 
     """
     Log probability of branching times given Yule process with branching rate phi.
     """
 
     T = branching_times[-1] #storing total time as last entry for convenience
+    n = sum(sample_times<T) #number of samples before cutoff
+    sample_times = sample_times[sample_times>0] #remove contemporary sample times
+    sample_times = np.flip(T - sample_times) #forward in time perspective of sampling times
+    sample_times = sample_times[sample_times>0] #ignore sampling older than cutoff
     n0 = n - (len(branching_times) - 1) #initial number of lineages (number of samples minus number of coalescence events)
     
     logp = 0 #initialize log probability
     prevt = 0 #initialize time
     k = n0 #initialize number of lineages
+    i = 0 #index of next sampling time
     # probability of each branching time
     for t in branching_times[:-1]: #for each branching time t
+        while i<len(sample_times) and sample_times[i] < t: #if next sampling happens before next branching
+            logp += - k * phi * (sample_times[i] - prevt) #log prob of no branching until sampling
+            prevt = sample_times[i] #update time
+            k -= 1 #remove lineage
+            i += 1 #next sample time
         logp += np.log(k * phi) - k * phi *  (t - prevt) #log probability of waiting time t-prevt with k lineages
         prevt = t #update time
         k += 1 #update number of lineages
 
-    # probability of no branching from most recent branching to T
+    # deal with any remaining sampling times
+    while i<len(sample_times): 
+        logp += - k * phi * (sample_times[i] - prevt) #log prob of no branching until sampling
+        prevt = sample_times[i] #update time
+        k -= 1 #remove lineage
+        i += 1 #next sample time
+
+    # probability of no branching from most recent event to T
     logp += - k * phi * (T - prevt)
 
-    # condition on having n samples from n0 in time T
+    # condition on having k samples from n0 in given time
     if condition_on_n:
-        logp -= np.log(math.comb(k - 1, k - n0) * (1 - np.exp(-phi * T))**(k - n0)) - phi * n0 * T # see page 234 of https://www.pitt.edu/~super7/19011-20001/19531.pdf for two different expressions
+        i = 0 #reset index of next sampling time
+        prevt = 0
+        while i<len(sample_times): 
+            k = n0 + sum([1 for t in branching_times if t>prevt and t<sample_times[i]]) #number of lineages at next sampling time
+            logp -= np.log(math.comb(k - 1, k - n0) * (1 - np.exp(-phi * (sample_times[i]-prevt)))**(k - n0)) - phi * n0 * (sample_times[i]-prevt) # see page 234 of https://www.pitt.edu/~super7/19011-20001/19531.pdf for two different expressions
+            prevt = sample_times[i] #update time
+            i += 1 #move to next sampling time
+            n0 = k #update number of lineages
 
     return logp

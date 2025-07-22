@@ -51,6 +51,10 @@ coverage.xml
 .pytest_cache/
 cover/
 
+data/
+relate/
+.snakemake/
+tsconvert/
 # Translations
 *.mo
 *.pot

@@ -65,14 +65,13 @@ def log_coal_density(coal_times, sample_times, Nes, epochs=None, T=None):
     if T is not None:
         coal_times = coal_times[coal_times < T] #ignore coalescence old times
         sample_times = sample_times[sample_times < T] #ignore old sampling times
-    sample_times = np.sort(sample_times) #order from most recent to most ancient sample
     k = sum(sample_times==0) #number of contemporary samples
     i = k #index of next sample time
     myIntensityMemos = _coal_intensity_memos(epochs, Nes) #intensities up to end of each epoch
 
     # probability of each coalescence time
     for ct in coal_times: #for each coalescence time
-        while sample_times[i] < ct: #if next sampling happens before next coalescence
+        while i<len(sample_times) and sample_times[i] < ct: #if next sampling happens before next coalescence
             kchoose2 = k * (k - 1) / 2 #binomial coefficient
             Lambda = _coal_intensity_using_memos(sample_times[i], epochs, myIntensityMemos, Nes) #coalescent intensity up to sampling time
             logpk = - kchoose2 * (Lambda - prevLambda) #log probability of no coalescence
