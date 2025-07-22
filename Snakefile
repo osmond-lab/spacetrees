@@ -422,7 +422,7 @@ rule locate_ancestors:
       times = [float(t)]
     ancestor_locations = locate_ancestors(samples=samples, times=times, 
                                           shared_times_chopped=stss, shared_times_chopped_centered_inverted=stss_inv, locations=locations, 
-                                          sigma=sigma, log_weights=log_weights)
+                                          sigma=sigma, log_weights=log_weights, sample_times=sample_times)
     with open(output[0], 'a') as f:
       for anc_loc in ancestor_locations:
         f.write(','.join([str(int(anc_loc[0]))] + [str(i) for i in anc_loc[1:]]) + '\n') #save
