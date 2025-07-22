@@ -54,7 +54,9 @@ def locate_ancestors(samples, times,
             if time < sample_times[sample]:
            
                 print('trying to locate ancestor more recent than sample')
-                mle = locations[sample]
+                mle = [np.nan] * d 
+                if BLUP_var:
+                    mle.append(np.nan)
 
             else:
 
