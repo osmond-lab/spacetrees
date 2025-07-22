@@ -38,6 +38,7 @@ def chop_shared_times(shared_times, T=None):
     pass
   else:
     shared_times = shared_times - (TMRCA - T) #calculate shared times since T
+    shared_times = np.clip(shared_times, a_min=0, a_max=T)
 
   return shared_times
 

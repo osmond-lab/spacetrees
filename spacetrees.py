@@ -53,7 +53,6 @@ def locate_ancestors(samples, times,
 
             if time < sample_times[sample]:
            
-                print('trying to locate ancestor more recent than sample')
                 mle = [np.nan] * d 
                 if BLUP_var:
                     mle.append(np.nan)
@@ -143,6 +142,7 @@ def estimate_dispersal(locations, shared_times_inverted, shared_times_logdet=Non
             for sts in stss: #loop over trees
                 guess += _mle_dispersal_tree(locations, sts) 
         guess = guess/(L*M) #avg mle over all trees and loci (note that we can avg over all trees and loci simultaneously because same number of trees at every locus)
+        print(guess)
         x0 = _sigma_to_sds_rho(guess) #convert initial dispersal rate to standard deviations and correlation, to feed into numerical search
         if BLUP:            
             return x0 #best linear unbiased predictor (returned as sds and corr, like numerical search below)
