@@ -1,0 +1,421 @@
+###################
+#### VARIABLES ####
+###################
+
+# ------------- paths ------------------
+
+DATADIR = 'data/' #where to put outputs
+PROGRAMDIR = 'programs/' #where to put programs
+
+#  ----------- parameters -----------------
+
+# required for SLiM simulations
+Ls = [int(1e8)] #number of basepairs
+RBPs = [1e-8] #per base pair recombination rate
+LAMBDAs = [2.0] #mean number of offspring per parent when no competition
+Ks = [1.0] #effect of competition on birth (higher values less effect)
+Ws = [100] #width of habitat square
+SIGMAcomps = [1.0] #SD of competition kernel
+SIGMAmates = [0.5] #SD of mate choice kernel
+SIGMAdisps = [0.75]
+selfings = [0] #fraction of offspring selfed
+MAXTs = [40000] #number of gens to run sim for (aim for 4*W**2*K, the expected time to an MRCA in a panmictic population) 
+sample_gens = range(100,1001,100) #generations (from present) to sample ancients in
+sample_gens_str = 'c('+','.join(map(str,sample_gens))+')' #reformat in Eidos
+reps = range(1) #replicates
+
+# required for processing trees
+Nes = [10000] #Ne for recapitation, make roughly W**2 * K
+Us = [1e-8] #per base pair mutation rate
+ds = [100] #max distance from center of habitat to sample
+ks = [100] #number of diploid individuals to sample
+Gs = [2] #number of genomes per individual to sample (number of sample nodes is k*G)
+numiters = [5] #number of mcmc iterations to do when inferring coalescence rates (5 is default)
+thresholds = [0.5] #fraction of trees to drop when inferring coalescence relates (0.5 is default)
+
+##################
+#### PROGRAMS ####
+##################
+
+# ------------------- slim ------------------
+
+SLiM = PROGRAMDIR + 'SLiM_build/slim' #command to run SLiM
+
+rule get_slim:
+  input:
+  output:
+    SLiM
+  shell:
+    '''
+    wget https://github.com/MesserLab/SLiM/releases/download/v4.0.1/SLiM.zip -P {PROGRAMDIR}
+    cd {PROGRAMDIR}
+    unzip SLiM.zip
+    rm SLiM.zip
+    module load cmake/3.21.4 gcc/13.2.0
+    mkdir build
+    cd build
+    cmake ../SLiM
+    make slim
+    cd .. 
+    mv build SLiM_build
+    '''
+
+# snakemake get_slim -c1
+
+# ---------------------- relate --------------
+
+RELATEDIR = PROGRAMDIR + 'relate' #where relate lives
+RELATE = PROGRAMDIR + 'relate/bin/Relate' #the executable
+
+rule get_relate:
+  input:
+  output:
+    RELATE
+  shell:
+    '''
+    git clone https://github.com/MyersGroup/relate.git
+    cd relate/build
+    module load cmake/3.21.4 gcc/13.2.0
+    cmake ..
+    make
+    cd -
+    mv relate/ {PROGRAMDIR}
+    ''' 
+
+# snakemake get_relate -c1
+# comment out last line of programs/relate/scripts/EstimatePopulationSize/EstimatePopulationSize.sh to avoid plotting
+
+###################
+### SIMULATIONS ###
+###################
+
+# ------- SLiM simulations -------
+
+slim_trees = DATADIR + "sim_{L}L_{RBP}RBP_{LAMBDA}LAMBDA_{K}K_{W}W_{SIGMAcomp}SIGMAcomp_{SIGMAmate}SIGMAmate_{SIGMAdisp}SIGMAdisp_{selfing}selfing_{MAXT}MAXT_{rep}rep.trees"
+
+rule slim_sim:
+  input:
+    rules.get_slim.output[0],
+    "sim.slim"
+  output:
+    slim_trees
+  group: "slim_sims"	 
+  threads: 80
+  resources:
+    runtime=90,
+  shell:
+    """
+    module load gcc/13.2.0    
+    mkdir -p {DATADIR}
+    {input[0]} \
+      -d L={wildcards.L} \
+      -d RBP={wildcards.RBP} \
+      -d LAMBDA={wildcards.LAMBDA} \
+      -d K={wildcards.K} \
+      -d W={wildcards.W} \
+      -d SIGMAcomp={wildcards.SIGMAcomp} \
+      -d SIGMAmate={wildcards.SIGMAmate} \
+      -d SIGMAdisp={wildcards.SIGMAdisp} \
+      -d selfing={wildcards.selfing} \
+      -d MAXT={wildcards.MAXT} \
+      -d "sample_gens={sample_gens_str}" \
+      -d rep={wildcards.rep} \
+      -d "output='{output}'" \
+      {input[1]}
+    """
+
+rule slim_sims:
+  input:
+    expand(slim_trees, L=Ls, RBP=RBPs, LAMBDA=LAMBDAs, K=Ks, W=Ws, SIGMAcomp=SIGMAcomps, SIGMAmate=SIGMAmates, SIGMAdisp=SIGMAdisps, selfing=selfings, MAXT=MAXTs, rep=reps)
+
+# snakemake slim_sims --profile slurm --jobs 1 -n
+
+# ------------------ get true tree sequences and locations of sample and make VCF -----------------
+
+true_trees = slim_trees.replace('.trees','_{Ne}Ne_{U}U_{d}d_{k}k_{G}G{end}')
+ends = ["_locs.txt", ".trees", ".vcf", "_Ne.txt", "_with_anc.trees", "_ages.txt"]
+
+rule true_tree:
+  input:
+    rules.slim_sim.output[0]
+  output:
+    expand(true_trees, end=ends, allow_missing=True)
+  group: "true_trees"
+  threads: 80
+  resources:
+    runtime=15
+  run:
+    # tame numpy
+    import os
+    os.environ["OMP_NUM_THREADS"] = str(threads)
+    os.environ["GOTO_NUM_THREADS"] = str(threads)
+    os.environ["OPENBLAS_NUM_THREADS"] = str(threads)
+    os.environ["MKL_NUM_THREADS"] = str(threads)
+    os.environ["VECLIB_MAXIMUM_THREADS"] = str(threads)
+    os.environ["NUMEXPR_NUM_THREADS"] = str(threads)
+    import numpy as np
+    import tskit, pyslim, msprime
+    print('load tree')
+    ts = tskit.load(input[0]) #load tree sequence
+    print('choose samples')
+    inds = np.array([i.id for i in ts.individuals() if ((i.location[0] - float(wildcards.W)/2)**2 + (i.location[1] - float(wildcards.W)/2)**2)**0.5 < float(wildcards.d) and ts.node(i.nodes[0]).time==0]) #potential individuals to sample
+    inds = np.random.choice(inds, int(wildcards.k), replace=False) #select k individuals randomly from potential
+    samples = [ts.individual(ind).nodes[:int(wildcards.G)] for ind in inds] #first G genomes from each individual
+    samples = [node for sample in samples for node in sample] #flatten
+    samples += [i for i in ts.samples() if ts.node(i).time>0] #add ancient samples
+    locs = [ts.individual(ts.node(sample).individual).location[:2] for sample in samples] #2d locations of all sample nodes
+    np.savetxt(output[0], locs) #save sample locations
+    print('simplify')
+    ts = ts.simplify(samples, keep_unary_in_individuals=True, keep_input_roots=True) #keep ancestors to find their true locations, keep input roots for recapping (note that now individual refers to index in inds)
+    ts.dump(output[4])
+    ts = ts.simplify(keep_input_roots=True) #remove unary nodes 
+    sample_times = [ts.node(i).time for i in ts.samples()] #time of each sample
+    np.savetxt(output[5], sample_times)
+    print('recapitate')
+    ts = pyslim.recapitate(ts, recombination_rate=float(wildcards.RBP), ancestral_Ne=float(wildcards.Ne)) #recapitate
+    ts.dump(output[1])
+    print('mutate')
+    ts = msprime.sim_mutations(ts, rate=float(wildcards.U)) #layer on mutations
+    print('make vcf')
+    individuals = [ts.individual(ts.node(i).individual).id for i in ts.samples()][::2] #list of individual ids in same order as locations
+    with open(output[2], "w") as vcf_file:
+      ts.write_vcf(vcf_file, individuals = individuals) #give the sampled individuals in the same order as inds/locations
+    twoNe = ts.diversity() / (2 * float(wildcards.U)) #simple estimate of 2Ne
+    np.savetxt(output[3], [int(twoNe)])
+
+###################
+### INFER TREES ###
+###################
+
+# ------------------- convert vcf to haps/sample ----------------------
+
+haps_sample = true_trees
+ends = ['.haps','.sample']
+
+rule haps_sample:
+  input:
+    rules.true_tree.output[2],
+    rules.get_relate.output[0] 
+  output:
+   expand(haps_sample, end=ends, allow_missing=True)
+  params:
+    prefix = true_trees.replace('{end}','')
+  group: "haps_samples"
+  threads: 1
+  resources:
+    runtime=15
+  shell:
+    '''
+    module load gcc/13.2.0 #needed for relate
+    {RELATEDIR}/bin/RelateFileFormats \
+                 --mode ConvertFromVcf \
+                 --haps {output[0]} \
+                 --sample {output[1]} \
+                 -i {params.prefix} \
+                 --chr 1
+    '''   
+
+# --------------- recombination map ---------
+
+rec_map = DATADIR + 'sim_{L}L_{RBP}RBP_{selfing}selfing.map'
+
+rule rec_map:
+  input:
+  output:
+    rec_map
+  threads: 1
+  group: "rec_maps"
+  run:
+    import numpy as np
+    L = int(wildcards.L)
+    R = (1 - (1 - 2 * float(wildcards.RBP))**L)/2 #recombination distance from one end of chromosome to other
+    cm = 50 * np.log(1/(1-2*R)) * (1-float(wildcards.selfing)) #length in centiMorgans, multiplied by outcrossing rate (effective length)
+    cr = cm/L * 1e6 * (1-float(wildcards.selfing)) #effective cM per million bases
+    script = "pos COMBINED_rate Genetic_Map \n0 %f 0 \n%d %f %f" %(cr, L, cr, cm)
+    os.system("echo '" + script + "' >"  + output[0])
+
+# --------------- haps to anc/mut ----------------
+
+anc_mut = haps_sample
+ends = ['.anc','.mut'] 
+
+rule anc_mut:
+  input:
+    rules.true_tree.output[3],
+    rules.haps_sample.output,
+    rules.rec_map.output[0],
+    rules.get_relate.output[0],
+    rules.true_tree.output[5],
+  output:
+    expand(anc_mut, end=ends, allow_missing=True)
+  threads: 1
+  group: "anc_muts"
+  resources:
+    runtime=15
+  params:
+    prefix = anc_mut.replace(DATADIR,'').replace('{end}',''),
+  shell:
+    '''
+    twoNe=( $(cat {input[0]}) )
+    module load gcc/13.2.0 #needed for relate
+    {RELATEDIR}/bin/Relate \
+      --mode All \
+      -m {wildcards.U} \
+      -N $twoNe \
+      --haps {input[1]} \
+      --sample {input[2]} \
+      --map {input[3]} \
+      --sample_ages {input[5]} \
+      --seed 1 \
+      -o {params.prefix}
+    mv {params.prefix}.* {DATADIR} 
+    '''
+
+# ------------- poplabels ------------
+
+poplabel = haps_sample
+ends = ['.poplabels']
+
+rule poplabel:
+  input:
+    rules.haps_sample.output[1]
+  output:
+    expand(poplabel, end=ends, allow_missing=True)
+  threads: 1
+  group: "poplabels"
+  shell:
+    '''
+    echo "sample population group sex" > {output[0]}
+    n=$(cat {input[0]} | wc -l) #number of samples plus two
+    n=$(($n - 2)) #number of samples
+    for i in $( seq 1 $n ); do echo "$i 1 1 NA" >> {output[0]}; done
+    '''
+
+# ------------- coalescence rates ---------
+# comment out last line of programs/relate/scripts/EstimatePopulationSize/EstimatePopulationSize.sh to avoid plotting
+
+coal_rate = anc_mut.replace('{end}','_{numiter}numiter_{threshold}threshold{end}')
+ends = ['.anc','.mut','.coal']
+
+rule coal_rate:
+  input:
+    rules.anc_mut.output,
+    rules.poplabel.output[0]
+  output:
+    expand(coal_rate, end=ends, allow_missing=True)
+  threads: 80
+  group: "coal_rates" 
+  resources:
+    runtime=15
+  params:
+    prefix = anc_mut.replace('{end}',''),
+    prefix_out = coal_rate.replace('{end}','')
+  shell:
+    '''
+    module load gcc/13.2.0 #needed for relate
+    # edited relate script to supress plotting
+    {RELATEDIR}/scripts/EstimatePopulationSize/EstimatePopulationSize.sh \
+              -i {params.prefix} \
+              -m {wildcards.U} \
+              --years_per_gen 1 \
+              --poplabels {input[2]} \
+              --seed 1 \
+              --num_iter {wildcards.numiter} \
+              --threshold {wildcards.threshold} \
+              --threads {threads} \
+              -o {params.prefix_out} 
+    gunzip {output[0]} #if using multiple threads
+    gunzip {output[1]} #if using multiple threads
+    '''
+
+rule coal_rates:
+  input:
+    expand(coal_rate,  L=Ls, RBP=RBPs, LAMBDA=LAMBDAs, K=Ks, W=Ws, SIGMAcomp=SIGMAcomps, SIGMAmate=SIGMAmates, SIGMAdisp=SIGMAdisps, selfing=selfings, MAXT=MAXTs, rep=reps, Ne=Nes, U=Us, d=ds, k=ks, G=Gs, numiter=numiters, threshold=thresholds, end=ends)
+
+# can be run in 30m (i used a debugjob)
+# snakemake coal_rates -c80
+
+# ------------- extract portion of genome as test data --------------
+
+extracted = coal_rate.replace('{end}','_extracted{end}')
+ends = ['.anc','.mut','.dist']
+
+rule extract:
+  input:
+    rules.coal_rate.output,
+  output:
+    expand(extracted, end=ends, allow_missing=True)
+  threads: 1 
+  resources:
+    runtime=15
+  params:
+    prefix_out = extracted.replace('{end}','')
+  shell:
+    '''
+    module load gcc/13.2.0 #needed for relate
+    {RELATEDIR}/bin/RelateExtract\
+       --mode AncMutForSubregion\
+       --anc {input[0]} \
+       --mut {input[1]} \
+       --first_bp 0 \
+       --last_bp 374450 \
+       -o {params.prefix_out} 
+    '''
+
+rule extracts:
+  input:
+    expand(extracted,  L=Ls, RBP=RBPs, LAMBDA=LAMBDAs, K=Ks, W=Ws, SIGMAcomp=SIGMAcomps, SIGMAmate=SIGMAmates, SIGMAdisp=SIGMAdisps, selfing=selfings, MAXT=MAXTs, rep=reps, Ne=Nes, U=Us, d=ds, k=ks, G=Gs, numiter=numiters, threshold=thresholds, end=ends)
+
+# ----------------- same trees with no ancient samples, for comparison -----------------
+
+anc_poplabel = poplabel.replace('{end}','_no-ancient')
+ends = ['.poplabels']
+
+rule anc_poplabel:
+  input:
+    rules.haps_sample.output[1]
+  output:
+    expand(anc_poplabel, end=ends, allow_missing=True)
+  threads: 1
+  group: "poplabels"
+  shell:
+    '''
+    echo "sample population group sex" > {output[0]}
+    n=$(cat {input[0]} | wc -l) #number of samples plus two
+    n=$(($n - 2)) #number of samples
+    n=$(($n - {wildcards.k})) #number of ancient samples 
+    for i in $( seq 1 {wildcards.k} ); do echo "$i contemporary 1 NA" >> {output[0]}; done
+    for i in $( seq 1 $n ); do echo "$i ancient 1 NA" >> {output[0]}; done
+    '''
+
+noancient = extracted.replace('{end}','_no-ancient{end}')
+ends = ['.anc','.mut']
+
+rule noancient:
+  input:
+    rules.extract.output[:2],
+    rules.anc_poplabel.output
+  output:
+    expand(noancient, end=ends, allow_missing=True)
+  threads: 1 
+  resources:
+    runtime=15
+  params:
+    prefix_out = noancient.replace('{end}','')
+  shell:
+    '''
+    module load gcc/13.2.0 #needed for relate
+    {RELATEDIR}/bin/RelateExtract\
+       --mode SubTreesForSubpopulation\
+       --anc {input[0]} \
+       --mut {input[1]} \
+       --poplabels {input[2]} \
+       --pop_of_interest contemporary \
+       -o {params.prefix_out} 
+    '''
+
+rule noancients:
+  input:
+    expand(noancient,  L=Ls, RBP=RBPs, LAMBDA=LAMBDAs, K=Ks, W=Ws, SIGMAcomp=SIGMAcomps, SIGMAmate=SIGMAmates, SIGMAdisp=SIGMAdisps, selfing=selfings, MAXT=MAXTs, rep=reps, Ne=Nes, U=Us, d=ds, k=ks, G=Gs, numiter=numiters, threshold=thresholds, end=ends)
+
+
