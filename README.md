@@ -3,8 +3,10 @@ Code to estimate dispersal rates and locate genetic ancestors from genome-wide g
 
 Formerly referred to as sparg, but that name is now reserved for inferring spatial histories from full ancestral recombination graphs (https://github.com/osmond-lab/sparg).
 
-# set up
+# warning
+If you need a time cutoff use the manuscript code (https://github.com/mmosmond/spacetrees-ms), we need to fix a bug in this streamlined version.
 
+# set up
 Here is how to get set up and run spacetrees, from the command-line:
 
 - Clone this directory, `git clone https://github.com/osmond-lab/spacetrees.git`.
