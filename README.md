@@ -29,6 +29,7 @@ Here is how to get set up and run spacetrees, from the command-line:
 	- move back to the main working directory, `cd -`
 - Run spacetrees via snakemake
 	- you should now be able to estimate dispersal and locate genetic ancestors with spacetrees via snakemake! simply write `snakemake all -c1` in the command line (-c1 indicates 1 thread, use more if you have them, but this example should run in less than a minute or two with -c1)
+	- on our server we have to first enter `export XDG_CACHE_HOME=$SCRATCH` so that snakemake writes to a write-able location
 	- TODO: lots more detail needed about how to customize your options within Snakefile
 	- TODO: show how to do this when you have multiple chromosomes
 - Plot
