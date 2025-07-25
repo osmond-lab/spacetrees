@@ -321,7 +321,7 @@ rule dispersal_rate:
       print('{0: 3.6f}   {1: 3.6f}   {2: 3.6f}   {3: 3.6f}'.format(x[0], x[1], x[2], x[3]))
     sigma = estimate_dispersal(locations=locations, shared_times_inverted=stss_inv, shared_times_logdet=stss_logdet,
                                branching_times=btss, sample_times=sample_times, logpcoals=lpcs,
-                               callbackF=callbackF, BLUP=True)
+                               callbackF=callbackF)
     with open(output.sigma, 'w') as f:
       f.write(','.join([str(i) for i in sigma])) #save
 
@@ -372,8 +372,7 @@ rule locate_ancestors:
     mat[np.triu_indices(k, k=0)] = stss[0] #convert to numpy matrix
     mat = mat + mat.T - np.diag(np.diag(mat))      
     x = np.diag(mat) #shared times with self
-    x = np.max(x) - x #sampling times
-    sample_times = np.sort(x) #sampling times in ascending order
+    sample_times = np.max(x) - x #sampling times
     stss_mat = [] #list of chopped shared times matrices in matrix form
     for sts in stss:
       sts = chop_shared_times(sts, T=T) #chop shared times to ignore history beyond T
@@ -410,7 +409,7 @@ rule locate_ancestors:
     sigma = _sds_rho_to_sigma(sigma[:-1]) #dispersal as covariance matrix
 
     # calculate importance weights
-    lbds = np.array([_log_birth_density(bts, sample_times, phi) for bts in btss]) #log probability densities of birth times
+    lbds = np.array([_log_birth_density(bts, np.sort(sample_times), phi) for bts in btss]) #log probability densities of birth times
     log_weights = lbds - lpcs #log importance weights
 
     # locate ancestors
@@ -472,8 +471,7 @@ rule locate_ancestors_blup:
     mat[np.triu_indices(k, k=0)] = stss[0] #convert to numpy matrix
     mat = mat + mat.T - np.diag(np.diag(mat))      
     x = np.diag(mat) #shared times with self
-    x = np.max(x) - x #sampling times
-    sample_times = np.sort(x) #sampling times in ascending order
+    sample_times = np.max(x) - x #sampling times
     stss_mat = [] #list of chopped shared times matrices in matrix form
     for sts in stss:
       sts = chop_shared_times(sts, T=T) #chop shared times to ignore history beyond T
@@ -557,8 +555,7 @@ rule locate_forgotten_blup:
     mat[np.triu_indices(n, k=0)] = stss[0] #convert to numpy matrix
     mat = mat + mat.T - np.diag(np.diag(mat))      
     x = np.diag(mat) #shared times with self
-    x = np.max(x) - x #sampling times
-    sample_times = np.sort(x) #sampling times in ascending order
+    sample_times = np.max(x) - x #sampling times
     stss_mat = [] #list of chopped shared times matrices in matrix form
     for sts in stss:
       sts = chop_shared_times(sts, T=T) #chop shared times to ignore history beyond T
@@ -571,14 +568,19 @@ rule locate_forgotten_blup:
     stss = stss_mat
 
     # locate ancestors
-    s = wildcards.s
+    s = wildcards.s.split("_")
     if s == 'All': #an option to locate the ancestors of all samples
       samples = range(n)   
     else:
-      samples = [int(s)]
+      try:
+        samples = [int(s)]
+      except:
+        samples = [int(i) for i in s]
     t = wildcards.t
     if t == 'All': #an option to locate at pretermined list of times 
       times = ancestor_times
+    elif t == 'None':
+      times = None
     else: 
       times = [float(t)]
     ancestor_locations = locate_ancestors(samples=samples, times=times, forget_locations=True,
@@ -593,7 +595,7 @@ rule locate_forgotten_blup:
 rule all:
   input:
     expand(dispersal_rate, M=Ms, T=Ts),
-    #expand(ancestor_locations, CHR=CHRS, locus=ancestor_loci, M=Ms, T=[None], s=['All'], t=['All']),
+    expand(ancestor_locations, CHR=CHRS, locus=ancestor_loci, M=Ms, T=[None], s=['All'], t=['All']),
     expand(ancestor_locations_blup, CHR=CHRS, locus=ancestor_loci, M=Ms, T=[None], s=['All'], t=['All']),
-    expand(forgotten_locations_blup, CHR=CHRS, locus=ancestor_loci, M=Ms, T=[None], s=[0], t=[0]) 
+    expand(forgotten_locations_blup, CHR=CHRS, locus=ancestor_loci, M=Ms, T=[None], s=['218_219'], t=[None]) 
 

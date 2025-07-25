@@ -72,6 +72,9 @@ def locate_ancestors(samples, times,
     # locate ancestors
     ancestor_locations = []
     for sample in tqdm(samples):
+
+        if times is None:
+          times = [sample_times[sample]]
         for time in times:
 
             # can't locate ancestor that is more recent than the sample
@@ -355,7 +358,7 @@ def _mc(locations, shared_times_inverted, shared_times_logdet, sigma_inverted, l
         for sti, ldst, bts, lpc in zip(shared_times_inverted, shared_times_logdet, branching_times, logpcoals):
             LLRs.append(_log_likelihoodratio(locations=locations, shared_times_inverted=sti, shared_times_logdet=ldst,
                                              sigma_inverted=sigma_inverted, log_det_sigma=log_det_sigma, 
-                                             important=important, branching_times=bts, phi=phi, logpcoals=lpc))
+                                             important=important, branching_times=bts, sample_times=sample_times, phi=phi, logpcoals=lpc))
 
     else:
         for sti, ldst in zip(shared_times_inverted, shared_times_logdet):
