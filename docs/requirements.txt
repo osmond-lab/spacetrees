@@ -1,0 +1,8 @@
+sphinx>=7.2
+sphinx-rtd-theme>=2.0
+myst-parser>=2.0
+
+# only what spacetrees.py / utils.py need to be importable for autodoc
+numpy
+scipy
+tqdm
