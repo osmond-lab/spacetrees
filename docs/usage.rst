@@ -25,6 +25,42 @@ the repository root to adjust these for your own data.
    chromosomes, is planned but not yet written — see the repository's README for the latest
    status.
 
+Running core functions from the command line
+---------------------------------------------
+
+``cli.py`` exposes :func:`spacetrees.estimate_dispersal` and :func:`spacetrees.locate_ancestors`
+directly from the command line, as an alternative to driving them through Snakemake — useful for
+scripting or for rerunning inference on already-preprocessed data. It expects the per-locus
+``.stss``, ``.stss_logdet``, ``_stss_inv.npy``, ``.btss``, and ``.lpcs`` files produced by the
+``Snakefile``'s ``process_times`` rule, plus a sample locations file.
+
+Estimate a dispersal rate from one or more loci::
+
+    python cli.py estimate-dispersal \
+        --stss-logdet locus1.stss_logdet locus2.stss_logdet \
+        --stss-inv locus1_stss_inv.npy locus2_stss_inv.npy \
+        --btss locus1.btss locus2.btss \
+        --lpcs locus1.lpcs locus2.lpcs \
+        --locations test.locations \
+        --out test.sigma
+
+Locate ancestors at a locus, given that estimated rate::
+
+    python cli.py locate-ancestors \
+        --stss locus1.stss \
+        --stss-inv locus1_stss_inv.npy \
+        --btss locus1.btss \
+        --lpcs locus1.lpcs \
+        --locations test.locations \
+        --sigma test.sigma \
+        --samples 0 1 \
+        --times 10 100 1000 \
+        --out locus1.locs
+
+Add ``--blup`` (and optionally ``--blup-var``) to ``locate-ancestors`` for the faster best linear
+unbiased predictor instead of the full likelihood surface, matching the Snakefile's
+``locate_ancestors_blup`` rule. Run either subcommand with ``--help`` for the full list of options.
+
 Plotting results
 -----------------
 
@@ -46,4 +82,5 @@ The pipeline calls into two Python modules for the underlying computation:
 * :mod:`utils` — helpers for extracting shared coalescence times from trees and computing
   coalescent time densities.
 
+``cli.py`` (see above) wraps the two ``spacetrees`` functions for direct command-line use.
 See :doc:`api` for the full reference.

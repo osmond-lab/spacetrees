@@ -31,6 +31,8 @@ Here is how to get set up and run spacetrees, from the command-line:
 	- you should now be able to estimate dispersal and locate genetic ancestors with spacetrees via snakemake! simply write `snakemake all -c1` in the command line (-c1 indicates 1 thread, use more if you have them, but this example should run in less than a minute or two with -c1)
 	- TODO: lots more detail needed about how to customize your options within Snakefile
 	- TODO: show how to do this when you have multiple chromosomes
+- Or run the core functions directly from the command line
+	- once you have the preprocessed per-locus files (the output of the Snakefile's `process_times` rule), `cli.py` lets you call `estimate_dispersal` and `locate_ancestors` without going through snakemake, e.g. `python cli.py estimate-dispersal --stss-logdet ... --stss-inv ... --btss ... --lpcs ... --locations test.locations --out test.sigma`. Run `python cli.py estimate-dispersal --help` or `python cli.py locate-ancestors --help` for the full set of options.
 - Plot
 	- make virtual environment accessible in Jupyter notebook with `python -m ipykernel install --name $myenv --user` and `venv2jup`
 	- TODO: some may need to install Jupyter?
