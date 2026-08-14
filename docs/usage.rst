@@ -4,62 +4,90 @@ Usage
 Running the pipeline
 ---------------------
 
-``spacetrees`` is driven through `Snakemake <https://snakemake.readthedocs.io/>`_, using the
-rules defined in the repository's ``Snakefile``. With the environment from
-:doc:`installation` activated, run::
+``spacetrees`` is driven through ``cli.py``, a command-line interface with five subcommands
+covering the whole pipeline from a Relate ``.mut`` file to located ancestors: ``loci-positions``,
+``extract-times``, ``process-times``, ``estimate-dispersal``, and ``locate-ancestors``. With the
+environment from :doc:`installation` activated, run any of them as::
 
-    snakemake all -c1
+    python cli.py <subcommand> --help
 
-``-c1`` tells Snakemake to use a single thread; increase this if you have more cores available.
-The bundled test data (in ``data/``) should run in well under a minute.
+to see its full list of options. You can jump in wherever you already have intermediate files —
+each subcommand only needs the files described below (the ``sample_trees`` step itself, i.e.
+Relate's ``SampleBranchLengths.sh``, is not wrapped here — run it directly to produce the newick
+file each locus's trees are sampled into).
 
-Customizing the run
---------------------
+Get the position of the first and last mutation at each locus in a ``.mut`` file::
 
-The ``Snakefile`` controls which input trees are used, how dispersal is estimated, and which
-ancestor locations are inferred. See the rules and parameters at the top of ``Snakefile`` in
-the repository root to adjust these for your own data.
+    python cli.py loci-positions \
+        --mut test_chr1.mut \
+        --out test_chr1.loci
 
-.. note::
-   Fuller documentation of the available ``Snakefile`` options, and an example with multiple
-   chromosomes, is planned but not yet written — see the repository's README for the latest
-   status.
+Extract shared and coalescence times from the sampled trees at a locus::
 
-Running core functions from the command line
----------------------------------------------
+    python cli.py extract-times \
+        --newick locus1.newick \
+        --out locus1
 
-``cli.py`` exposes :func:`spacetrees.estimate_dispersal` and :func:`spacetrees.locate_ancestors`
-directly from the command line, as an alternative to driving them through Snakemake — useful for
-scripting or for rerunning inference on already-preprocessed data. It expects the per-locus
-``.stss``, ``.stss_logdet``, ``_stss_inv.npy``, ``.btss``, and ``.lpcs`` files produced by the
-``Snakefile``'s ``process_times`` rule, plus a sample locations file.
+This writes ``locus1.stss`` and ``locus1.ctss``.
+
+Process those times at a given time cutoff ``T`` (chop, center, invert the shared times, and
+derive branching times and coalescent-time log probabilities; omit ``--T`` for no cutoff).
+``--out`` is a base prefix — the cutoff is appended automatically, so the files this writes
+depend on ``--T``::
+
+    python cli.py process-times \
+        --times locus1 \
+        --coal test.coal \
+        --T 10000 \
+        --out locus1
+
+This reads ``locus1.stss`` and ``locus1.ctss`` (from ``extract-times`` above) and writes
+``locus1_10000T.stss``, ``locus1_10000T.stss-logdet``, ``locus1_10000T_stss-inv.npy``,
+``locus1_10000T.btss``, and ``locus1_10000T.lpcs`` — everything under one self-contained
+``locus1_10000T`` prefix, ready for :func:`spacetrees.estimate_dispersal` and
+:func:`spacetrees.locate_ancestors` below (plus a sample locations file). Different ``--T``
+values with the same ``--out`` don't collide — each gets its own suffixed prefix.
+
+Omitting ``--T`` skips the ``.stss`` output — chopping is a no-op with no cutoff, so it would only
+duplicate ``extract-times``' file — and writes the rest directly to ``--out`` with no suffix. Use
+the *same* prefix as ``--times`` so the unchopped ``locus1.stss`` sits right alongside them::
+
+    python cli.py process-times \
+        --times locus1 \
+        --coal test.coal \
+        --out locus1
+
+This writes ``locus1.stss-logdet``, ``locus1_stss-inv.npy``, ``locus1.btss``, and ``locus1.lpcs``
+— combined with the existing ``locus1.stss``, ``--in locus1`` below has everything it needs.
 
 Estimate a dispersal rate from one or more loci::
 
     python cli.py estimate-dispersal \
-        --stss-logdet locus1.stss_logdet locus2.stss_logdet \
-        --stss-inv locus1_stss_inv.npy locus2_stss_inv.npy \
-        --btss locus1.btss locus2.btss \
-        --lpcs locus1.lpcs locus2.lpcs \
+        --in locus1_10000T locus2_10000T \
         --locations test.locations \
         --out test.sigma
+
+Each ``--in`` entry is a full prefix from ``process-times`` (including its ``T`` suffix): this
+reads ``locus1_10000T.stss-logdet``, ``locus1_10000T_stss-inv.npy``, ``locus1_10000T.btss``, and
+``locus1_10000T.lpcs``, and the same four files for ``locus2_10000T``.
 
 Locate ancestors at a locus, given that estimated rate::
 
     python cli.py locate-ancestors \
-        --stss locus1.stss \
-        --stss-inv locus1_stss_inv.npy \
-        --btss locus1.btss \
-        --lpcs locus1.lpcs \
+        --in locus1_10000T \
         --locations test.locations \
         --sigma test.sigma \
         --samples 0 1 \
-        --times 10 100 1000 \
+        --ancestor_times 10 100 1000 \
         --out locus1.locs
 
+``--in`` reads all four files written by ``process-times`` for that prefix: ``locus1_10000T.stss``
+(already chopped at ``T=10000``), ``locus1_10000T_stss-inv.npy``, ``locus1_10000T.btss``, and
+``locus1_10000T.lpcs``.
+
 Add ``--blup`` (and optionally ``--blup-var``) to ``locate-ancestors`` for the faster best linear
-unbiased predictor instead of the full likelihood surface, matching the Snakefile's
-``locate_ancestors_blup`` rule. Run either subcommand with ``--help`` for the full list of options.
+unbiased predictor instead of the full likelihood surface. Run any subcommand with ``--help`` for
+its full list of options.
 
 Plotting results
 -----------------
@@ -82,5 +110,5 @@ The pipeline calls into two Python modules for the underlying computation:
 * :mod:`utils` — helpers for extracting shared coalescence times from trees and computing
   coalescent time densities.
 
-``cli.py`` (see above) wraps the two ``spacetrees`` functions for direct command-line use.
-See :doc:`api` for the full reference.
+``cli.py`` (see above) wraps ``utils``' tree-processing helpers and the two ``spacetrees``
+functions for direct command-line use. See :doc:`api` for the full reference.

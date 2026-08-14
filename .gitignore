@@ -2,7 +2,7 @@
 # data in data/ — keeps only the original inputs tracked (test_chr1.anc/.mut/.dist, test.coal,
 # test.locations).
 data/test_chr1.loci
-data/test_chr1_*locus_10M*
+data/test_chr1_locus*
 data/*.sigma
 
 # Local plotting notebook — kept on disk, not tracked (results/paths are user- and run-specific)

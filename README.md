@@ -20,19 +20,12 @@ Here is how to get set up and run spacetrees, from the command-line:
 	- `cd tsconvert`
 	- `pip install .`
 	- move back to the main working directory, `cd -`
-- Install Relate. I used v1.2.1. See https://myersgroup.github.io/relate/index.html for more info and options.
-	- On my server I downloaded the source code with `git clone https://github.com/MyersGroup/relate.git` on June 7, 2024. This is roughly version 1.2.1.
-	- Move into the Relate directory, `cd relate/build`.
-        - On my server I had to load these tools to build relate, `module load cmake/3.22.5 gcc/11.3.0`.
-    	- `cmake ..`
-    	- `make` 
-	- move back to the main working directory, `cd -`
-- Run spacetrees via snakemake
-	- you should now be able to estimate dispersal and locate genetic ancestors with spacetrees via snakemake! simply write `snakemake all -c1` in the command line (-c1 indicates 1 thread, use more if you have them, but this example should run in less than a minute or two with -c1)
-	- TODO: lots more detail needed about how to customize your options within Snakefile
-	- TODO: show how to do this when you have multiple chromosomes
-- Or run the core functions directly from the command line
-	- once you have the preprocessed per-locus files (the output of the Snakefile's `process_times` rule), `cli.py` lets you call `estimate_dispersal` and `locate_ancestors` without going through snakemake, e.g. `python cli.py estimate-dispersal --stss-logdet ... --stss-inv ... --btss ... --lpcs ... --locations test.locations --out test.sigma`. Run `python cli.py estimate-dispersal --help` or `python cli.py locate-ancestors --help` for the full set of options.
+- Install Relate. Go to https://myersgroup.github.io/relate/ and download a precompiled binary (pick the static build unless you have a specific reason to prefer dynamic — it doesn't depend on your system's library versions matching what Relate was built with).
+	- Extract the downloaded archive into the project directory and rename the resulting folder to `relate` (i.e. so `relate/scripts/...` and `relate/bin/...` exist at the project root).
+	- If you'd rather build from source, or need a version not offered as a precompiled binary, see https://github.com/MyersGroup/relate for instructions.
+- Run spacetrees from the command line
+	- `cli.py` covers the whole pipeline from a Relate `.mut` file to located ancestors, as five subcommands: `python cli.py loci-positions --mut test_chr1.mut --out test_chr1.loci`, then (once you've sampled trees at a locus with `SampleBranchLengths.sh`) `python cli.py extract-times --newick locus1.newick --out locus1` (writes `locus1.stss` and `locus1.ctss`), then `python cli.py process-times --times locus1 --coal test.coal --T 10000 --out locus1` (reads `locus1.stss` and `locus1.ctss`; `--out` is a base prefix, so this writes `locus1_10000T.stss`, `locus1_10000T.stss-logdet`, `locus1_10000T_stss-inv.npy`, `locus1_10000T.btss`, and `locus1_10000T.lpcs` — omit `--T` to skip the `.stss` output, which would just duplicate `extract-times`', and write the rest straight to `locus1.stss-logdet`/`locus1_stss-inv.npy`/`locus1.btss`/`locus1.lpcs`, no suffix)
+	- once you have those preprocessed per-locus files, `python cli.py estimate-dispersal --in locus1_10000T locus2_10000T --locations test.locations --out test.sigma` (reads `locus1_10000T.stss-logdet`/`locus1_10000T_stss-inv.npy`/`locus1_10000T.btss`/`locus1_10000T.lpcs` and the same for `locus2_10000T`) estimates a dispersal rate, and `python cli.py locate-ancestors --in locus1_10000T --locations test.locations --sigma test.sigma --ancestor_times 10 100 1000 --out locus1.locs` locates ancestors. Run `python cli.py <subcommand> --help` for the full set of options for any of the five subcommands (`loci-positions`, `extract-times`, `process-times`, `estimate-dispersal`, `locate-ancestors`).
 - Plot
 	- make virtual environment accessible in Jupyter notebook with `python -m ipykernel install --name $myenv --user` and `venv2jup`
 	- TODO: some may need to install Jupyter?
