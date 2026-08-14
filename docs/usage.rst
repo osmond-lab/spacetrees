@@ -85,8 +85,8 @@ reads ``data/test_chr1_locus1_10000T.stss-logdet``, ``data/test_chr1_locus1_1000
 ``--out`` is written as a single comma-separated line. For 2D locations (as in the test data) this is ``sdx,sdy,rho,phi``: the dispersal standard
 deviations along each axis, their correlation ``rho``, and the branching rate ``phi`` (for 1D
 locations it's just ``sdx,phi``). ``phi`` is only present when importance sampling is used (the
-default) — with ``--no-importance`` it's omitted, so that file can't be used directly by
-``locate-ancestors`` below without also specifying ``--blup`` below.
+default) — with ``--no-importance`` it's omitted, so that file can't be used by
+``locate-ancestors`` below.
 
 6. Locate ancestors at a locus::
 
