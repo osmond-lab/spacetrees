@@ -14,11 +14,7 @@ These steps set up ``spacetrees`` from the command line.
     source venv/bin/activate
     pip install -r requirements.txt
 
-3. Install `tsconvert <https://github.com/tskit-dev/tsconvert>`_, which isn't available on PyPI::
+This also installs `tsconvert <https://github.com/tskit-dev/tsconvert>`_ directly from GitHub (it isn't
+on PyPI, so ``requirements.txt`` points pip at a pinned commit instead).
 
-    git clone https://github.com/tskit-dev/tsconvert.git
-    cd tsconvert
-    pip install .
-    cd -
-
-Once these are installed you're ready to run ``spacetrees`` — see :doc:`usage`.
+Once this is installed you're ready to run ``spacetrees`` — see :doc:`usage`.
