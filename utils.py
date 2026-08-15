@@ -30,16 +30,37 @@ def get_shared_times(tree, samples):
 
   return sts
 
-def chop_shared_times(shared_times, T=None):
+def split_shared_times(shared_times, T=None):
 
-  TMRCA = shared_times[0] #tmrca
+  """
+  Chop shared times at cutoff T and split samples into isolated subtrees:
+  groups of samples whose lineages still share time with each other since T
+  (history beyond T disconnects lineages that coalesced before the cutoff,
+  so they no longer belong to the same subtree). Returns a list of
+  (sample_ids, shared_times_submatrix) pairs, one per subtree.
+  """
 
+  k = int((np.sqrt(1 + 8 * (len(shared_times) - 1)) + 1) / 2) #number of samples
+  mat = np.zeros((k, k))
+  mat[np.triu_indices(k, k=1)] = shared_times[1:]
+  mat = mat + mat.T + np.diag([shared_times[0]] * k) #full symmetric shared-times matrix
+
+  TMRCA = shared_times[0]
   if T is None or T > TMRCA: #dont cut if dont ask or cut time older than MRCA
-    pass
-  else:
-    shared_times = T - (TMRCA - shared_times) #calculate shared times since T
+    return [(np.arange(k), mat)]
 
-  return shared_times
+  chopped = T - (TMRCA - mat) #shared times since T (negative between samples in different subtrees)
+
+  samples = np.arange(k)
+  subtrees = []
+  taken = np.zeros(k, dtype=bool)
+  while not taken.all(): #while some samples not yet assigned to a subtree
+    i = np.argmax(~taken) #next sample not yet assigned
+    withi = chopped[i] >= 0 #samples that still share time with i since T
+    taken |= withi
+    subtrees.append((samples[withi], chopped[np.ix_(withi, withi)]))
+
+  return subtrees
 
 def center_shared_times(shared_times):
  

@@ -102,9 +102,8 @@ default) — with ``--no-importance`` it's omitted, so that file can't be used b
 (already chopped at ``T=10000``), ``data/test_chr1_locus1_10000T_stss-inv.npy``, ``data/test_chr1_locus1_10000T.btss``, and
 ``data/test_chr1_locus1_10000T.lpcs``.
 
-Add ``--blup`` (and optionally ``--blup-var``) to ``locate-ancestors`` for the faster best linear
-unbiased predictor instead of the full likelihood surface. This does not require a dispersal estimate (omit ``--sigma``), which is the slowest part of the pipeline.
+Add ``--blup`` to ``locate-ancestors`` for the faster best linear unbiased predictor instead of the
+full likelihood surface. This does not require a dispersal estimate (omit ``--sigma``), which is the slowest part of the pipeline.
 
 Each row of ``--out`` is ``sample,time,x,y,...`` — the 0-indexed sample (matching the row order in ``--locations``), the time in the past, and one column per spatial dimension of the estimated ancestor location at that time (two columns, ``x`` and ``y``, for the 2D test data). With
-``--blup --blup-var``, each row gets one extra trailing column: the variance of the BLUP
-estimate.
+``--blup``, each row gets one extra trailing column: the variance of the BLUP estimate.
