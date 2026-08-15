@@ -4,9 +4,9 @@ Usage
 Running the pipeline
 ---------------------
 
-``spacetrees`` is driven through ``cli.py``, a command-line interface with five subcommands
+``spacetrees`` is driven through ``cli.py``, a command-line interface with four subcommands
 covering the whole pipeline from a Relate tree sequence to dispersal rates and located ancestors: ``loci-positions``,
-``extract-times``, ``process-times``, ``estimate-dispersal``, and ``locate-ancestors``. With the
+``process-times``, ``estimate-dispersal``, and ``locate-ancestors``. With the
 environment from :doc:`installation` activated, run any of them as::
 
     python cli.py <subcommand> --help
@@ -43,35 +43,30 @@ Here are the steps to run spacetrees on the test data.
 This writes ``data/test_chr1_locus1.newick`` (plus per-locus ``.anc``/``.mut``/``.dist``/``.sites``
 files), sampling 10 trees (``--num_samples``) at a mutation rate of ``1e-8`` (``-m``).
 
-3. Extract shared and coalescence times from the sampled trees at a locus::
-
-    python cli.py extract-times \
-        --newick data/test_chr1_locus1.newick \
-        --out data/test_chr1_locus1
-
-This writes ``data/test_chr1_locus1.stss`` and ``data/test_chr1_locus1.ctss``.
-
-4. Process those times at a given time cutoff ``T`` (chop, center, invert the shared times, and
-derive branching times and coalescent-time log probabilities; omit ``--T`` for no cutoff).
-``--out`` is a base prefix — the cutoff is appended automatically, so the files this writes
-depend on ``--T``::
+3. Extract shared and coalescence times from the sampled trees at a locus, chop the shared times at
+a given time cutoff ``T`` (splitting each tree into isolated subtrees — groups of samples still
+sharing time since ``T``; their true coalescence predates the cutoff, so they're treated as
+independent), center and invert each subtree's shared times, and derive branching times and
+coalescent-time log probabilities. Omit ``--T`` for no cutoff (one trivial subtree containing all
+samples). ``--out`` is a base prefix — the cutoff is appended automatically::
 
     python cli.py process-times \
-        --times data/test_chr1_locus1 \
+        --newick data/test_chr1_locus1.newick \
         --coal data/test.coal \
         --T 10000 \
         --out data/test_chr1_locus1
 
-This reads ``data/test_chr1_locus1.stss`` and ``data/test_chr1_locus1.ctss`` (from ``extract-times`` above) and writes
-``data/test_chr1_locus1_10000T.stss``, ``data/test_chr1_locus1_10000T.stss-logdet``, ``data/test_chr1_locus1_10000T_stss-inv.npy``,
-``data/test_chr1_locus1_10000T.btss``, and ``data/test_chr1_locus1_10000T.lpcs``.
+This writes ``data/test_chr1_locus1_10000T.times.pkl`` — a pickled list, one entry per sampled
+tree, each holding:
 
-Omitting ``--T`` skips the ``.stss`` output — chopping is a no-op with no cutoff, so it would only
-duplicate ``extract-times``' file — and writes the rest directly to ``--out`` with no suffix. Use
-the *same* prefix as ``--times`` so the unchopped ``data/test_chr1_locus1.stss`` sits right alongside them.
+- ``subtrees``: the tree's isolated subtrees since ``T``, each with ``sample_ids``,
+  ``shared_times``, ``shared_times_logdet``, and ``shared_times_inv``
+- ``branching_times``
+- ``logpcoal``
 
+Omitting ``--T`` skips the cutoff and writes ``data/test_chr1_locus1.times.pkl`` with no suffix.
 
-5. Estimate a dispersal rate from one or more loci::
+4. Estimate a dispersal rate from one or more loci::
 
     python cli.py estimate-dispersal \
         --in data/test_chr1_locus1_10000T data/test_chr1_locus2_10000T \
@@ -79,8 +74,7 @@ the *same* prefix as ``--times`` so the unchopped ``data/test_chr1_locus1.stss``
         --out data/test.sigma
 
 Each ``--in`` entry is a full prefix from ``process-times`` (including its ``T`` suffix): this
-reads ``data/test_chr1_locus1_10000T.stss-logdet``, ``data/test_chr1_locus1_10000T_stss-inv.npy``, ``data/test_chr1_locus1_10000T.btss``, and
-``data/test_chr1_locus1_10000T.lpcs``, and the same four files for ``data/test_chr1_locus2_10000T``.
+reads ``data/test_chr1_locus1_10000T.times.pkl`` and ``data/test_chr1_locus2_10000T.times.pkl``.
 
 ``--out`` is written as a single comma-separated line. For 2D locations (as in the test data) this is ``sdx,sdy,rho,phi``: the dispersal standard
 deviations along each axis, their correlation ``rho``, and the branching rate ``phi`` (for 1D
@@ -88,7 +82,7 @@ locations it's just ``sdx,phi``). ``phi`` is only present when importance sampli
 default) — with ``--no-importance`` it's omitted, so that file can't be used by
 ``locate-ancestors`` below.
 
-6. Locate ancestors at a locus::
+5. Locate ancestors at a locus::
 
     python cli.py locate-ancestors \
         --in data/test_chr1_locus1_10000T \
@@ -98,9 +92,8 @@ default) — with ``--no-importance`` it's omitted, so that file can't be used b
         --ancestor_times 10 100 1000 \
         --out data/test_chr1_locus1.locs
 
-``--in`` reads all four files written by ``process-times`` for that prefix: ``data/test_chr1_locus1_10000T.stss``
-(already chopped at ``T=10000``), ``data/test_chr1_locus1_10000T_stss-inv.npy``, ``data/test_chr1_locus1_10000T.btss``, and
-``data/test_chr1_locus1_10000T.lpcs``.
+``--in`` reads ``data/test_chr1_locus1_10000T.times.pkl``, the file written by ``process-times``
+for that prefix (already chopped at ``T=10000``).
 
 Add ``--blup`` to ``locate-ancestors`` for the faster best linear unbiased predictor instead of the
 full likelihood surface. This does not require a dispersal estimate (omit ``--sigma``), which is the slowest part of the pipeline.
