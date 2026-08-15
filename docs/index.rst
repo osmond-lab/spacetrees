@@ -9,11 +9,6 @@ Associated with the paper `Osmond & Coop 2024 <https://elifesciences.org/article
    separate project that infers spatial histories from full ancestral recombination graphs:
    `osmond-lab/sparg <https://github.com/osmond-lab/sparg>`_.
 
-.. warning::
-   If you need a time cutoff, use the manuscript code instead
-   (`spacetrees-ms <https://github.com/mmosmond/spacetrees-ms>`_) — there is a known bug in
-   the time-cutoff handling of this streamlined version.
-
 .. toctree::
    :maxdepth: 2
    :caption: Contents
