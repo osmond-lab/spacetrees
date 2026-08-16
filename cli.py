@@ -53,6 +53,7 @@ def cmd_process_times(args):
     Nes = 0.5 / np.genfromtxt(args.coal, skip_header=2)[2:]  # effective population size during each epoch
 
     trees_data = []
+    sample_times = None  # each sample's own age; fixed by Relate's sample order, so derived once from the first tree
     with open(args.newick, 'r') as newick_in:
 
         next(newick_in)  # skip header
@@ -66,7 +67,12 @@ def cmd_process_times(args):
             samples = [int(ts.node(node).metadata['name']) for node in ts.samples()]  # index of each sample in list given to relate
             sample_order = np.argsort(samples)
             ordered_samples = [ts.samples()[i] for i in sample_order]
-            sts_raw = np.array(get_shared_times(tree, ordered_samples))  # shared times between all pairs, ordered as in relate
+            sts_raw = np.array(get_shared_times(tree, ordered_samples))  # shared times between all pairs (incl. self), ordered as in relate
+
+            if sample_times is None:
+                _, full_mat = split_shared_times(sts_raw, T=None)[0]  # unsplit full matrix
+                diag = np.diag(full_mat)
+                sample_times = np.max(diag) - diag  # each sample's own age (0 for contemporary samples)
 
             cts = np.array(sorted(tree.time(i) for i in tree.nodes() if not tree.is_sample(i)))  # coalescence times, ascending
 
@@ -91,7 +97,7 @@ def cmd_process_times(args):
             bts = bts[bts > 0]
             bts = np.append(bts, Tmax)  # append total time as last item
 
-            lpc = log_coal_density(times=cts, Nes=Nes, epochs=epochs, T=Tmax)
+            lpc = log_coal_density(coal_times=cts, sample_times=sample_times, Nes=Nes, epochs=epochs, T=Tmax)
 
             # branching times and coalescent-time log probability are properties of the
             # whole tree, not of individual subtrees, so they sit alongside 'subtrees'
@@ -102,7 +108,9 @@ def cmd_process_times(args):
             })
 
     with open(out_trees, 'wb') as f:
-        pickle.dump(trees_data, f)  # list of trees, each {subtrees, branching_times, logpcoal}
+        # 'trees': list of trees, each {subtrees, branching_times, logpcoal}
+        # 'sample_times': each sample's own age (0 for contemporary samples), aligned to the locations file
+        pickle.dump({'trees': trees_data, 'sample_times': sample_times}, f)
 
     print(f'wrote processed times to {out_trees}')
 
@@ -112,9 +120,13 @@ def cmd_estimate_dispersal(args):
     locations = np.loadtxt(args.locations)
 
     processed_times = []
+    sample_times = None  # assumed consistent across loci (same samples, same ages); taken from the first
     for prefix in args.in_:
         with open(prefix + '.times.pkl', 'rb') as f:
-            processed_times.append(pickle.load(f))
+            data = pickle.load(f)
+        processed_times.append(data['trees'])
+        if sample_times is None:
+            sample_times = data['sample_times']
 
     important = not args.no_importance
 
@@ -122,6 +134,7 @@ def cmd_estimate_dispersal(args):
         locations=locations,
         processed_times=processed_times,
         important=important,
+        sample_times=sample_times,
         quiet=args.quiet,
     )
 
@@ -136,7 +149,9 @@ def cmd_locate_ancestors(args):
     n = locations.shape[0]
 
     with open(args.in_ + '.times.pkl', 'rb') as f:
-        trees = pickle.load(f)
+        data = pickle.load(f)
+    trees = data['trees']
+    sample_times = data['sample_times']
 
     sigma = None if args.sigma is None else np.loadtxt(args.sigma, delimiter=',')
 
@@ -148,6 +163,8 @@ def cmd_locate_ancestors(args):
         processed_times=trees,
         sample_locations=locations,
         sigma=sigma,
+        sample_times=sample_times,
+        forget_locations=args.forget_locations,
         BLUP=args.blup,
         quiet=args.quiet,
     )
@@ -175,7 +192,7 @@ def build_parser():
     p0b.add_argument('--newick', required=True, metavar='FILE', help='newick file of sampled trees at a locus, as produced by SampleBranchLengths.sh')
     p0b.add_argument('--coal', required=True, metavar='FILE', help="Relate's *.coal file (effective population size through time)")
     p0b.add_argument('--T', type=float, default=None, metavar='T', help='time cutoff, ignoring history beyond this time; default: none')
-    p0b.add_argument('--out', required=True, metavar='PREFIX', help="base prefix for the output file. With --T, the cutoff is appended (e.g. PREFIX_10000T.times.pkl). PREFIX.times.pkl holds, per sampled tree, its isolated subtrees since T (sample_ids/shared_times/shared_times_logdet/shared_times_inv — one trivial all-samples subtree with no --T) plus that tree's branching_times and logpcoal")
+    p0b.add_argument('--out', required=True, metavar='PREFIX', help="base prefix for the output file. With --T, the cutoff is appended (e.g. PREFIX_10000T.times.pkl). PREFIX.times.pkl holds {'trees': ..., 'sample_times': ...} -- 'trees' is a list, one per sampled tree, of its isolated subtrees since T (sample_ids/shared_times/shared_times_logdet/shared_times_inv — one trivial all-samples subtree with no --T) plus that tree's branching_times and logpcoal; 'sample_times' is each sample's own age (0 for contemporary samples), aligned to the locations file")
     p0b.add_argument('--quiet', action='store_true')
     p0b.set_defaults(func=cmd_process_times)
 
@@ -193,7 +210,8 @@ def build_parser():
     p2.add_argument('--sigma', default=None, metavar='FILE', help='dispersal (and branching) rate file, from estimate-dispersal; required unless --blup (without it, trees cannot be importance-weighted by branching rate, so they are weighted equally instead)')
     p2.add_argument('--out', required=True, metavar='FILE', help='where to write the located ancestors')
     p2.add_argument('--samples', type=int, nargs='+', default=None, metavar='I', help='0-indexed sample(s) to locate ancestors for; default: all samples')
-    p2.add_argument('--ancestor_times', type=float, nargs='+', required=True, metavar='T', help='time(s) in the past to locate ancestors at')
+    p2.add_argument('--ancestor_times', type=float, nargs='+', default=None, metavar='T', help='time(s) in the past to locate ancestors at; default: each sample\'s own sample time (from process-times), e.g. for --forget-locations')
+    p2.add_argument('--forget-locations', dest='forget_locations', action='store_true', help="mask the given --samples' own known locations (held out together, not one at a time) and predict them from shared times with everyone else under Brownian motion -- e.g. to check the model fit, or trace a migrant lineage's origin")
     p2.add_argument('--blup', action='store_true', help='use the (faster) best linear unbiased predictor instead of the full likelihood surface; also reports its variance as a trailing column')
     p2.add_argument('--quiet', action='store_true')
     p2.set_defaults(func=cmd_locate_ancestors)

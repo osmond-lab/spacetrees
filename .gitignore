@@ -1,8 +1,8 @@
 # Generated intermediate/output files from running the pipeline (cli.py) on the bundled test
 # data in data/ — keeps only the original inputs tracked (test_chr1.anc/.mut/.dist, test.coal,
-# test.locations).
-data/test_chr1.loci
-data/test_chr1_locus*
+# test.locations, and their test_with_ancients_* counterparts).
+data/*.loci
+data/*_locus*
 data/*.sigma
 
 # Local plotting notebook — kept on disk, not tracked (results/paths are user- and run-specific)
