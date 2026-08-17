@@ -1,3 +1,5 @@
+"""Core inference: estimating dispersal rates and locating genetic ancestors from processed genealogies."""
+
 from scipy.optimize import minimize
 import scipy.sparse as sp
 import time
@@ -68,6 +70,15 @@ def locate_ancestors(samples, ancestor_times,
     if sigma is None:
         log_weights = np.zeros(M)
     else:
+        expected_len = d * (d + 1) // 2 + 1 #sdx[,sdy,rho],phi
+        if len(sigma) != expected_len:
+            raise ValueError(
+                f"sigma has {len(sigma)} value(s) but locate_ancestors needs {expected_len} "
+                "(sdx[,sdy,rho],phi) to importance-weight trees by branching rate -- this sigma "
+                "looks like it's missing phi, e.g. from an estimate-dispersal run with --blup or "
+                "--no-importance. Either omit sigma (trees will be weighted equally) or supply one "
+                "from estimate-dispersal run without --blup or --no-importance."
+            )
         phi = sigma[-1] #branching rate is always the last entry
         sigma = _sds_rho_to_sigma(sigma[:-1]) #dispersal covariance matrix
         lbds = np.array([_log_birth_density(tree['branching_times'], sample_times, phi) for tree in processed_times])
@@ -231,7 +242,7 @@ def estimate_dispersal(locations, processed_times, method='L-BFGS-B',
     x0 = _sigma_to_sds_rho(guess) #convert initial dispersal rate to standard deviations and correlation, to feed into numerical search
     if BLUP:
         return x0 #best linear unbiased predictor (returned as sds and corr, like numerical search below)
-    x0 = [i/2 for i in x0] #heuristic because the estimate seems to be a consistent overestimate
+    x0 = [i/2 for i in x0] #heuristic because the BLUP estimate seems to be a consistent overestimate
     if not quiet: print('initial dispersal rate:',x0)
 
     # initializing branching rate

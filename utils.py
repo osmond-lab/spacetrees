@@ -1,4 +1,7 @@
+"""Tree-processing and math primitives: parsing Relate output into locus/time data structures used by spacetrees.py's inference functions."""
+
 import numpy as np
+from tqdm import tqdm
 
 def loci_positions(mut, outfile):
 
@@ -16,6 +19,89 @@ def loci_positions(mut, outfile):
           ix = ix + 1 #next locust
         pos = int(line.split(';')[1]) #position of this snp
     fout.write(str(start) + ' ' + str(pos) + '\n') #position of first and last snp at last locus
+
+def process_times(newick_file, coal_file, T=None, quiet=False):
+
+  """
+  Extracts shared and coalescence times from each sampled tree at a locus
+  (a newick file produced by Relate's SampleBranchLengths.sh), chops the
+  shared times at a time cutoff T and splits them into isolated subtrees,
+  centers and inverts each, and derives branching times and coalescent-time
+  log probabilities.
+
+  Returns (trees_data, sample_times):
+    - trees_data: a list, one entry per sampled tree, each holding:
+        - 'subtrees': the tree's isolated subtrees since T, each with sample_ids,
+          shared_times (matrix), shared_times_logdet (log determinant), and
+          shared_times_inv (inverted shared time matrix) -- one trivial
+          all-samples subtree if T is None
+        - 'branching_times'
+        - 'logpcoal' (log probability of the coalescence times given Ne in coal_file)
+    - sample_times: each sample's own age (0 for contemporary samples), read
+      straight off the genealogy
+  """
+
+  from tsconvert import from_newick  # imported lazily: not needed by callers that don't process trees
+
+  epochs = np.genfromtxt(coal_file, skip_header=1, skip_footer=1)  # time each epoch starts (and the final one ends)
+  Nes = 0.5 / np.genfromtxt(coal_file, skip_header=2)[2:]  # effective population size during each epoch
+
+  trees_data = []
+  sample_times = None  # each sample's own age; fixed by Relate's sample order, so derived once from the first tree
+  with open(newick_file, 'r') as newick_in:
+
+      next(newick_in)  # skip header
+      lines = newick_in if quiet else tqdm(newick_in)
+      for line in lines:
+
+          string = line.split()[4]  # extract newick string only (Relate adds some info beforehand)
+          ts = from_newick(string, min_edge_length=1e-6)
+          tree = ts.first()
+
+          samples = [int(ts.node(node).metadata['name']) for node in ts.samples()]  # index of each sample in list given to relate
+          sample_order = np.argsort(samples)
+          ordered_samples = [ts.samples()[i] for i in sample_order]
+          sts_raw = np.array(get_shared_times(tree, ordered_samples))  # shared times between all pairs (incl. self), ordered as in relate
+
+          if sample_times is None:
+              _, full_mat = split_shared_times(sts_raw, T=None)[0]  # unsplit full matrix
+              diag = np.diag(full_mat)
+              sample_times = np.max(diag) - diag  # each sample's own age (0 for contemporary samples)
+
+          cts = np.array(sorted(tree.time(i) for i in tree.nodes() if not tree.is_sample(i)))  # coalescence times, ascending
+
+          # isolated subtrees: groups of samples still sharing time since T, split
+          # apart from each other (their true coalescence predates the cutoff);
+          # with no cutoff this is just the one subtree of all samples
+          subtree_records = []
+          for sample_ids, sub_mat in split_shared_times(sts_raw, T=T):
+              sub_centered = center_shared_times(sub_mat)
+              subtree_records.append({
+                  'sample_ids': sample_ids,
+                  'shared_times': sub_mat,
+                  'shared_times_logdet': np.linalg.slogdet(sub_centered)[1],
+                  'shared_times_inv': np.linalg.inv(sub_centered) if sub_centered.size else sub_centered,
+              })
+
+          # coalescence times: derive branching times and their log probability
+          Tmax = cts[-1]  # time to most recent common ancestor
+          if T is not None and T < Tmax:
+              Tmax = T
+          bts = Tmax - np.flip(cts)  # branching times, ascending
+          bts = bts[bts > 0]
+          bts = np.append(bts, Tmax)  # append total time as last item
+
+          lpc = log_coal_density(coal_times=cts, sample_times=sample_times, Nes=Nes, epochs=epochs, T=Tmax)
+
+          # branching times and coalescent-time log probability are properties of the
+          # whole tree, not of individual subtrees, so they sit alongside 'subtrees'
+          trees_data.append({
+              'subtrees': subtree_records,
+              'branching_times': bts,
+              'logpcoal': lpc,
+          })
+
+  return trees_data, sample_times
 
 def get_shared_times(tree, samples):
 
