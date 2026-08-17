@@ -53,8 +53,10 @@ def process_times(newick_file, coal_file, T=None, quiet=False):
   sample_times = None  # each sample's own age; fixed by Relate's sample order, so derived once from the first tree
   with open(newick_file, 'r') as newick_in:
 
+      n_trees = sum(1 for _ in newick_in) - 1  # total lines minus header, for tqdm's progress bar
+      newick_in.seek(0)
       next(newick_in)  # skip header
-      lines = newick_in if quiet else tqdm(newick_in)
+      lines = newick_in if quiet else tqdm(newick_in, total=n_trees)
       for line in lines:
 
           string = line.split()[4]  # extract newick string only (Relate adds some info beforehand)
