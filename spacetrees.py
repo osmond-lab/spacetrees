@@ -1,10 +1,10 @@
 """Core inference: estimating dispersal rates and locating genetic ancestors from processed genealogies."""
 
 from scipy.optimize import minimize
+from scipy.special import gammaln
 import scipy.sparse as sp
 import time
 import numpy as np
-import math
 from tqdm import tqdm
 
 from utils import center_shared_times
@@ -473,6 +473,21 @@ def _location_loglikelihood(locations, subtree, sigma_inverted):
 
     return -0.5 * (logcoeff + exponent) #add the two terms together and multiply by -1/2
 
+def _log_comb_term(k, n0, dt, phi):
+
+    """
+    log( comb(k-1, k-n0) * (1 - exp(-phi*dt))**(k-n0) ), computed in log-space.
+    comb(k-1, k-n0) can be astronomically large (n0, k ~ sample size), overflowing
+    float/int-to-float conversion long before it's brought back down by the tiny
+    probability it's multiplied by, so gammaln keeps everything in log-space instead.
+    """
+
+    m = k - n0
+    if m == 0: #comb(k-1, 0) * (...)**0 == 1, and log1p(-exp(-phi*dt)) may be -inf if dt==0
+        return 0.0
+    log_comb = gammaln(k) - gammaln(m + 1) - gammaln(n0)
+    return log_comb + m * np.log1p(-np.exp(-phi * dt))
+
 def _log_birth_density(branching_times, sample_times, phi, condition_on_n=True):
 
     """
@@ -518,13 +533,13 @@ def _log_birth_density(branching_times, sample_times, phi, condition_on_n=True):
         if len(sample_times) == 0:
             # no non-contemporary entrants: one correction over the whole [0,T] interval,
             # exactly as before sample_times existed
-            logp -= np.log(math.comb(k - 1, k - n0) * (1 - np.exp(-phi * T))**(k - n0)) - phi * n0 * T # see page 234 of https://www.pitt.edu/~super7/19011-20001/19531.pdf for two different expressions
+            logp -= _log_comb_term(k, n0, T, phi) - phi * n0 * T # see page 234 of https://www.pitt.edu/~super7/19011-20001/19531.pdf for two different expressions
         else:
             i = 0 #reset index of next sampling time
             prevt = 0
             while i < len(sample_times):
                 k_i = n0 + sum(1 for t in branching_times if t > prevt and t < sample_times[i]) #number of lineages at next sampling time
-                logp -= np.log(math.comb(k_i - 1, k_i - n0) * (1 - np.exp(-phi * (sample_times[i] - prevt)))**(k_i - n0)) - phi * n0 * (sample_times[i] - prevt) # see page 234 of https://www.pitt.edu/~super7/19011-20001/19531.pdf for two different expressions
+                logp -= _log_comb_term(k_i, n0, sample_times[i] - prevt, phi) - phi * n0 * (sample_times[i] - prevt) # see page 234 of https://www.pitt.edu/~super7/19011-20001/19531.pdf for two different expressions
                 prevt = sample_times[i] #update time
                 i += 1 #move to next sampling time
                 n0 = k_i #update number of lineages
