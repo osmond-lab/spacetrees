@@ -28,7 +28,7 @@ def _T_label(T):
 
 def cmd_loci_positions(args):
     """Writes the position of the first and last mutation at each locus in a
-    Relate .mut file, one locus per line, space-delimited."""
+    Relate .mut(.gz) file, one locus per line, space-delimited."""
 
     loci_positions(args.mut, args.out)
     print(f'wrote loci positions to {args.out}')

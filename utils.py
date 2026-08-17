@@ -1,12 +1,15 @@
 """Tree-processing and math primitives: parsing Relate output into locus/time data structures used by spacetrees.py's inference functions."""
 
+import gzip
 import numpy as np
 from tqdm import tqdm
 
 def loci_positions(mut, outfile):
 
+  opener = gzip.open if mut.endswith('.gz') else open
+
   with open(outfile, 'w') as fout:
-    with open(mut, "r") as fin:
+    with opener(mut, "rt") as fin:
       ix = 1
       next(fin) #skip header
       for i,line in enumerate(fin):

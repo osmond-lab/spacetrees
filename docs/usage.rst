@@ -16,7 +16,7 @@ to see its full list of options.
 
 Here are the steps to run spacetrees on the test data.
 
-1. Get the position of the first and last mutation at each tree (hereafter locus) from a Relate ``.mut`` file::
+1. Get the position of the first and last mutation at each tree (hereafter locus) from a Relate ``.mut(.gz)`` file::
 
     python cli.py loci-positions \
         --mut data/test_chr1.mut \
