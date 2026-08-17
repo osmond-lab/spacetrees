@@ -1,5 +1,5 @@
-numpy==2.2.6
-scipy==1.13.1
-tqdm==4.66.4
-tskit==1.0.3
+numpy>=2.2.6,<3
+scipy>=1.13.1,<2
+tqdm>=4.66.4,<5
+tskit>=1.0.3,<2
 tsconvert @ git+https://github.com/tskit-dev/tsconvert.git@4ed3c0f9bbbb79c7c394b352c58f5386cfef2b90
